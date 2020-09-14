@@ -2,9 +2,8 @@ defmodule Ark.Drip do
   use GenServer
   alias :queue, as: Q
   @dropped :"$dropped_drip"
-  @doc false
-  def __ark__(:alias), do: false
 
+  @doc false
   def __ark__(:doc) do
     """
     This module implements a `GenServer` and allows to throttle calls
