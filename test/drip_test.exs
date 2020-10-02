@@ -19,7 +19,7 @@ defmodule Ark.DripTest do
           IO.puts("drop [#{id}] #{inspect(self())} #{:erlang.system_time(:second)}")
           :ok
         catch
-          :exit, e ->
+          :exit, _ ->
             IO.puts("exit [#{id}]")
 
             receive do

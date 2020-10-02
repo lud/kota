@@ -59,6 +59,7 @@ defmodule Ark.Drip do
     GenServer.cast(bucket, {:cancel, pid})
   end
 
+  @doc false
   def init(args) do
     max_drips = Keyword.fetch!(args, :max_drips)
     range_ms = Keyword.fetch!(args, :range_ms)
