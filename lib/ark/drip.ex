@@ -108,7 +108,7 @@ defmodule Ark.Drip do
   defp start_task(ms) do
     this = self()
 
-    Task.start_link(fn ->
+    spawn_link(fn ->
       Process.sleep(ms)
       send(this, @dropped)
     end)
