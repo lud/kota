@@ -50,7 +50,7 @@ defmodule Ark.DripTest do
     tasks |> Enum.map(&Task.await(&1, :infinity))
     t2 = :erlang.monotonic_time(:millisecond)
     # 20 drips at 10 per second should take at least 1 seconds
-    # but less thant 2 seconds, since at time 0 we can run 10 tasks, 
+    # but less thant 2 seconds, since at time 0 we can run 10 tasks,
     # and at time 1 we can run the last 10
     assert t2 - t1 > 1000 * (div(20, 10) - 1)
     assert t2 - t1 < 1000 * div(20, 10)

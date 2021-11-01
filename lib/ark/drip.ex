@@ -63,7 +63,10 @@ defmodule Ark.Drip do
   def init(args) do
     max_drips = Keyword.fetch!(args, :max_drips)
     range_ms = Keyword.fetch!(args, :range_ms)
-    if max_drips < 1, do: raise("Minimum drip per period is 1, got: #{inspect(max_drips)}")
+
+    if max_drips < 1,
+      do: raise("Minimum drip per period is 1, got: #{inspect(max_drips)}")
+
     if range_ms < 1, do: raise("Minimum period is 1, got: #{inspect(range_ms)}")
 
     state = %{
