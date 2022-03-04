@@ -117,7 +117,6 @@ defmodule Ark.DripTest do
     {oks, tos} =
       tasks
       |> Enum.map(&Task.await(&1, :infinity))
-      |> IO.inspect()
       |> Enum.split_with(&Ark.Ok.ok?/1)
 
     assert length(oks) == expected_ok
