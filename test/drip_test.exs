@@ -1,5 +1,5 @@
 defmodule Ark.DripTest do
-  use ExUnit.Case, async: true
+  use ExUnit.Case, async: false
   alias Ark.Drip
 
   defmodule H do
