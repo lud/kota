@@ -185,7 +185,4 @@ defmodule Ark.DripTest do
     IO.puts("sleep #{n}")
     Process.sleep(n)
   end
-
-  test "todooo"
-  # Enum.chunk_every(1000..1010, 4, 1, :discard)
 end
