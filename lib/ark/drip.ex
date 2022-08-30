@@ -32,7 +32,10 @@ defmodule Ark.Drip do
     :allowance,
 
     # The time at which the current slot ends
-    :slot_end
+    :slot_end,
+
+    # The total dropped count
+    :count
   ]
 
   defstruct @enforce_keys
@@ -53,7 +56,8 @@ defmodule Ark.Drip do
         stage: 1,
         usage: {0, 0, 0},
         allowance: max_drips,
-        slot_end: now + high_range
+        slot_end: now + high_range,
+        count: 0
       }
 
       {:ok, bucket}
@@ -79,19 +83,21 @@ defmodule Ark.Drip do
     # if so much time has passed, we will simply reset
     twice = max_range * 2
 
-    if now - slend > twice do
-      bucket |> reset(now) |> drop(now)
-    else
-      bucket |> rotate(now) |> drop(now)
-    end
+    # if now - slend > twice do
+    #   bucket |> reset(now) |> drop(now)
+    # else
+    bucket |> rotate(now) |> drop(now)
+    # end
   end
 
-  def drop(%__MODULE__{allowance: al, usage: {u1, u2, u3}} = bucket, now) when al > 0 do
-    {:ok, %__MODULE__{bucket | allowance: al - 1, usage: {u1, u2, u3 + 1}}}
+  def drop(%__MODULE__{allowance: al, usage: {u1, u2, u3}, count: c} = bucket, now)
+      when al > 0 do
+    {:ok, %__MODULE__{bucket | allowance: al - 1, usage: {u1, u2, u3 + 1}, count: c + 1}}
   end
 
   def drop(%__MODULE__{allowance: al} = bucket, now) do
-    :error
+    # since we will have called rotate(), we still return the updated bucket
+    {:reject, bucket}
   end
 
   defp reset(%{max_drips: max_drips, ranges: {_, high_range}} = bucket, now) do
@@ -119,8 +125,6 @@ defmodule Ark.Drip do
         2 -> {3, slend + low}
         3 -> {1, slend + high}
       end
-
-    IO.puts("entering stage #{stage}")
 
     allowance = max - (u2 + u3)
     usage = {u2, u3, 0}
