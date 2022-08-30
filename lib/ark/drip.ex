@@ -75,19 +75,19 @@ defmodule Ark.Drip do
     {:ok, {low_range, high_range}}
   end
 
-  def drop(%__MODULE__{ranges: {low_range, max_range}, slot_end: slend} = bucket, now)
+  def drop(%__MODULE__{ranges: {low_range, high_range}, slot_end: slend} = bucket, now)
       when now >= slend do
     # if two empty slots have passed, we should not loop until we reach the
     # current time, because if used in a long lived application, maybe full days
     # have passed since the last call.
     # if so much time has passed, we will simply reset
-    twice = max_range * 2
+    twice = high_range * 2
 
-    # if now - slend > twice do
-    #   bucket |> reset(now) |> drop(now)
-    # else
-    bucket |> rotate(now) |> drop(now)
-    # end
+    if now - slend > twice do
+      bucket |> reset(now) |> drop(now)
+    else
+      bucket |> rotate(now) |> drop(now)
+    end
   end
 
   def drop(%__MODULE__{allowance: al, usage: {u1, u2, u3}, count: c} = bucket, now)
