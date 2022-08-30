@@ -1,5 +1,5 @@
 defmodule Ark.DripTest do
-  use ExUnit.Case, async: false
+  use ExUnit.Case, async: true
   alias Ark.Drip
 
   defmodule H do
@@ -113,6 +113,39 @@ defmodule Ark.DripTest do
     assert t2 - t1 < 1100
   end
 
+  test "long loop" do
+    {:ok, drip} = Drip.start_link(max_drips: 3, range_ms: 1000)
+
+    count = n_call(drip, 2, 0)
+    sleep_log(2000)
+    count = n_call(drip, 4, count)
+    sleep_log(300)
+    count = n_call(drip, 1, count)
+    sleep_log(300)
+    count = n_call(drip, 10, count)
+  end
+
+  test "window boundaries" do
+    # Here we will ask 3 drips right before the first window end, and 3 more
+    # right after. The second group must be delayed. To verify that, there
+    # should be one second difference between the 1st drip and the 4th.
+
+    {:ok, drip} = Drip.start_link(max_drips: 3, range_ms: 1000)
+    Process.sleep(700)
+
+    f = fn ->
+      Drip.await(drip)
+
+      t =
+        :erlang.system_time(:millisecond)
+        |> IO.inspect(label: "t")
+    end
+
+    items = [f.(), f.(), f.(), f.(), f.(), f.()]
+
+    assert Enum.at(items, 3) - Enum.at(items, 0) > 1000
+  end
+
   defp assert_batch(tasks, expected_ok, expected_timeout) do
     {oks, tos} =
       tasks
@@ -132,4 +165,27 @@ defmodule Ark.DripTest do
     opts = [strategy: :one_for_one, name: __MODULE__.TestSupervisor]
     assert {:ok, _} = Supervisor.start_link(children, opts)
   end
+
+  defp n_call(drip, n, count \\ 0)
+
+  defp n_call(drip, n, count) when n <= 0 do
+    count
+  end
+
+  defp n_call(drip, n, count) when is_integer(n) do
+    new_count = count + 1
+    label = new_count |> Integer.to_string() |> String.pad_leading(5)
+    Drip.await(drip)
+    # t = :erlang.system_time(:millisecond)
+    # IO.inspect(t, label: label)
+    n_call(drip, n - 1, new_count)
+  end
+
+  defp sleep_log(n) do
+    IO.puts("sleep #{n}")
+    Process.sleep(n)
+  end
+
+  test "todooo"
+  # Enum.chunk_every(1000..1010, 4, 1, :discard)
 end
