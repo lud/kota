@@ -2,34 +2,49 @@ defmodule Ark.Drip.BucketTest do
   use ExUnit.Case, async: true
   alias Ark.Drip.Bucket
 
-  defp test_bucket(max_drips, range_ms, start_time) do
+  defp test_bucket(max_drops, range_ms, start_time, slot_time \\ 10) do
     assert {:ok, bucket} =
              Bucket.new_ok(
-               max_drips: max_drips,
+               max_drops: max_drops,
                range_ms: range_ms,
-               start_time: start_time
+               start_time: start_time,
+               slot_time: slot_time
              )
 
+    expected_slot_time = start_time + slot_time
+    expected_slot_end = expected_slot_time
+
     assert %Bucket{
-             ranges: {low_range, high_range},
-             stage: 1,
-             usage: {0, 0, 0},
-             allowance: ^max_drips,
-             max_drips: ^max_drips
+             range_ms: ^range_ms,
+             slot_usage: 0,
+             slot_time: ^expected_slot_time,
+             slot_end: ^expected_slot_end,
+             count: 0,
+             refills: _,
+             allowance: ^max_drops,
+             max_drops: ^max_drops
            } = bucket
-
-    assert range_ms == low_range * 2 + high_range
-    expected_end = start_time + high_range
-
-    assert expected_end == bucket.slot_end
 
     bucket
   end
 
-  test "threes, consume early" do
-    b = test_bucket(3, 1000, 0)
+  test "bucket force divisible time slot" do
+    assert {:ok, _} =
+             Bucket.new_ok(max_drops: 1, range_ms: 1000, start_time: 0, slot_time: 10)
 
-    # we can immediately enqueue the full capacity at time zero
+    assert {:error, "slot time 999999 is greater than range 1000"} =
+             Bucket.new_ok(
+               max_drops: 1,
+               range_ms: 1000,
+               start_time: 0,
+               slot_time: 999_999
+             )
+  end
+
+  test "threes, consume early" do
+    b = test_bucket(3, 300, 0)
+
+    # we can immediately enqueue the full capacity at time zero in slot 1/3
 
     assert {:ok, b} = Bucket.drop(b, 0)
     assert {:ok, b} = Bucket.drop(b, 0)
@@ -41,48 +56,95 @@ defmodule Ark.Drip.BucketTest do
 
     assert {:reject, b} = Bucket.drop(b, 0)
 
-    # we are moving time to slot two. calls should still be rejected
+    # we are moving time to slot 2/3. calls should still be rejected
 
-    assert {:reject, b} = Bucket.drop(b, 400)
+    b |> IO.inspect(label: "b before 111")
+    assert {:reject, b} = Bucket.drop(b, 111)
+    b |> IO.inspect(label: "b at 111")
 
-    # same with slot three
+    # same with slot 3/3
 
-    assert {:reject, b} = Bucket.drop(b, 999)
+    assert {:reject, b} = Bucket.drop(b, 222)
 
     # now our bucket should be full and we can drop anew
 
-    assert {:ok, b} = Bucket.drop(b, 1000)
-    assert {:ok, b} = Bucket.drop(b, 1000)
-    assert {:ok, b} = Bucket.drop(b, 1000)
+    Bucket.drop(b, 300) |> IO.inspect(label: "reject")
+
+    assert {:ok, b} = Bucket.drop(b, 300)
+    assert {:ok, b} = Bucket.drop(b, 300)
+    assert {:ok, b} = Bucket.drop(b, 300)
+  end
+
+  test "ignoring returned bucket from rejections works" do
+    # this test should be the same as the one above, please update accordingly.
+    # the only difference is that we discard any bucket state returned on
+    # rejection
+
+    b = test_bucket(3, 300, 0)
+
+    # we can immediately enqueue the full capacity at time zero in slot 1/3
+
+    assert {:ok, b} = Bucket.drop(b, 0)
+    assert {:ok, b} = Bucket.drop(b, 0)
+    assert {:ok, b} = Bucket.drop(b, 0)
+
+    assert %{allowance: 0} = b
+
+    # now that all drips have been consumed, further calls are rejected
+
+    assert {:reject, _} = Bucket.drop(b, 0)
+
+    # we are moving time to slot 2/3. calls should still be rejected
+
+    b |> IO.inspect(label: "b before 111")
+    assert {:reject, _} = Bucket.drop(b, 111)
+    b |> IO.inspect(label: "b at 111")
+
+    # same with slot 3/3
+
+    assert {:reject, _} = Bucket.drop(b, 222)
+
+    # now our bucket should be full and we can drop anew
+
+    Bucket.drop(b, 300) |> IO.inspect(label: "reject")
+
+    assert {:ok, b} = Bucket.drop(b, 300)
+    assert {:ok, b} = Bucket.drop(b, 300)
+    assert {:ok, b} = Bucket.drop(b, 300)
   end
 
   test "threes, consume late" do
-    b = test_bucket(3, 1000, 0)
+    b = test_bucket(3, 300, 0)
 
-    # we can immediately enqueue the full capacity at time zero
+    # we can immediately enqueue the full capacity at the end of the period
 
-    assert {:ok, b} = Bucket.drop(b, 997)
-    assert {:ok, b} = Bucket.drop(b, 998)
-    assert {:ok, b} = Bucket.drop(b, 999)
+    assert {:ok, b} = Bucket.drop(b, 297)
+    assert {:ok, b} = Bucket.drop(b, 298)
+    assert {:ok, b} = Bucket.drop(b, 299)
 
     assert %{allowance: 0} = b
+
+    b.refills |> IO.inspect(label: "b.refills")
 
     # since we consumed 3 on the third third of the time period, we should only
     # be able to consume in the third third of the second period
 
-    assert {:reject, b} = Bucket.drop(b, 1000 + 000)
-    assert {:reject, b} = Bucket.drop(b, 1000 + 100)
-    assert {:reject, b} = Bucket.drop(b, 1000 + 200)
-    assert {:reject, b} = Bucket.drop(b, 1000 + 300)
-    assert {:reject, b} = Bucket.drop(b, 1000 + 400)
-    assert {:reject, b} = Bucket.drop(b, 1000 + 500)
-    assert {:reject, b} = Bucket.drop(b, 1000 + 600)
+    assert {:reject, b} = Bucket.drop(b, 300 + 0)
+    assert {:reject, b} = Bucket.drop(b, 300 + 50)
+    assert {:reject, b} = Bucket.drop(b, 300 + 100)
+    assert {:reject, b} = Bucket.drop(b, 300 + 150)
+    assert {:reject, b} = Bucket.drop(b, 300 + 200)
+    assert {:reject, b} = Bucket.drop(b, 300 + 250)
 
-    # and we can consume them all
+    # The time slot is 10 by default in this test, and the last successful call was
+    # at 299, so at 300 + 299 (599) we should be able to call
 
-    assert {:ok, b} = Bucket.drop(b, 1000 + 700)
-    assert {:ok, b} = Bucket.drop(b, 1000 + 700)
-    assert {:ok, b} = Bucket.drop(b, 1000 + 700)
+    assert {:reject, b} = Bucket.drop(b, 300 + 297)
+    assert {:reject, b} = Bucket.drop(b, 300 + 298)
+
+    assert {:ok, b} = Bucket.drop(b, 300 + 299)
+    assert {:ok, b} = Bucket.drop(b, 300 + 299)
+    assert {:ok, b} = Bucket.drop(b, 300 + 299)
   end
 
   test "threes, consume irregular" do
@@ -120,21 +182,21 @@ defmodule Ark.Drip.BucketTest do
     #   able to do so in less than 15,000 ms
 
     # bucket config
-    max_drips = 20
+    max_drops = 20
     range_ms = 100
     start_time = 0
 
     # test config
     iterations = 100
     warp_time = 10
-    maximum_expected_time = iterations / max_drips * range_ms
+    maximum_expected_time = iterations / max_drops * range_ms
     jitter = 3
 
     IO.puts(
-      "maximum_expected_time = (#{iterations} / #{max_drips}) * #{range_ms} = #{round(iterations / max_drips)} * #{range_ms} = #{round(maximum_expected_time)}"
+      "maximum_expected_time = (#{iterations} / #{max_drops}) * #{range_ms} = #{round(iterations / max_drops)} * #{range_ms} = #{round(maximum_expected_time)}"
     )
 
-    bucket = test_bucket(max_drips, range_ms, start_time)
+    bucket = test_bucket(max_drops, range_ms, start_time)
     accin = {bucket, start_time}
 
     # a function that will increment time until the drop is accepted, and
@@ -190,51 +252,36 @@ defmodule Ark.Drip.BucketTest do
         window |> IO.inspect(label: "window")
         sum = Enum.reduce(window, 0, fn {_, n}, acc -> acc + n end)
 
-        if sum > max_drips do
-          assert sum <= max_drips
+        if sum > max_drops do
+          assert sum <= max_drops
         end
       end)
 
     assert end_time < maximum_expected_time
     end_time |> IO.inspect(label: "end_time")
-
-    assert false
   end
 
-  test "large gaps in time will simply reset the stage" do
-    b = test_bucket(3, 1000, 0)
+  # test "large gaps in time will simply reset the stage" do
+  #  raise "todo make a test that would take years to complete without the optimisation
+  #   b = test_bucket(3, 1000, 0)
 
-    # we can immediately enqueue the full capacity at time zero
+  #   # we can immediately enqueue the full capacity at time zero
 
-    assert {:ok, b} = Bucket.drop(b, 997)
-    assert {:ok, b} = Bucket.drop(b, 998)
-    assert {:ok, b} = Bucket.drop(b, 999)
+  #   assert {:ok, b} = Bucket.drop(b, 997)
+  #   assert {:ok, b} = Bucket.drop(b, 998)
+  #   assert {:ok, b} = Bucket.drop(b, 999)
 
-    assert %{allowance: 0} = b
+  #   assert %{allowance: 0} = b
 
-    # ten seconds after, we should be in slot 3/3 but so much time has passed,
-    # the state will reset
+  #   # ten seconds after, we should be in slot 3/3 but so much time has passed,
+  #   # the state will reset
 
-    assert {:ok, b} = Bucket.drop(b, 10_000 + 997)
-    assert {:ok, b} = Bucket.drop(b, 10_000 + 998)
-    assert {:ok, b} = Bucket.drop(b, 10_000 + 999)
+  #   assert {:ok, b} = Bucket.drop(b, 10_000 + 997)
+  #   assert {:ok, b} = Bucket.drop(b, 10_000 + 998)
+  #   assert {:ok, b} = Bucket.drop(b, 10_000 + 999)
 
-    # the count is not reset
-    assert 1 == b.stage
-    assert 6 == b.count
-  end
-
-  todo!("""
-  Autre méthode:
-
-  On définit un :timespan permettant de calculer un slot_end.
-
-  À chaque fois que `now` atteint ce slot_end on enqueue un bail autorisant le
-  drop de l'usage courant du slot, à une date de slot_end + range_ms.
-
-  Plus le timestamp est petit et plus on s'approche d'un compte unitaire,
-  donc plus précis, mais plus gourmand. Plus le timespan est grand moins on
-  bouffe de CPU mais plus on perd du temps (on fait moins d'appels qu'autorisé).
-
-  """)
+  #   # the count is not reset
+  #   assert 1 == b.stage
+  #   assert 6 == b.count
+  # end
 end

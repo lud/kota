@@ -13,125 +13,135 @@ defmodule Ark.Drip do
 
   defmodule Bucket do
     @enforce_keys [
-      # The two time period to count : {low_range, high_range}. For instance, for
-      # 1000 ms we would have {333, 334}. 333 for two time periods and 334 for the
-      # other, as (333 * 2) + 334 = 1000.
-      # The high range is actually used by the first time period
-      :ranges,
-
       # How much drips in the time period, used to calculate the sliding window
-      :max_drips,
+      :max_drops,
 
-      # 1 | 2 | 3
-      :stage,
+      # Duration limiting allowing max_drops drops
+      :range_ms,
 
-      # A 3-tuple representing the current usage of the two previous time slots
-      # and the present slot
-      :usage,
-
-      # The maximum usage available for the current slot.
+      # The maximum usage available for the current time.
       :allowance,
 
-      # The time at which the current slot ends
+      # Count of drops in the current time slot
+      :slot_usage,
+
+      # The duration of a slot
+      :slot_time,
+
+      # The absolute time at which the current slot ends, exclusive (a call
+      # coming at that exact timestamp will belong to the new slot)
       :slot_end,
 
       # The total dropped count
-      :count
+      :count,
+
+      # a queue of new allowances to come. New allowances are created at the end
+      # of each time slot plus range_ms, incrementing allowance with the same
+      # amount of the current usage
+      :refills,
+
+      # Timestamp of the last used, which will delimit the new time slot and
+      # refill time
+      :last_use
     ]
 
     defstruct @enforce_keys
 
-    def new_ok(max_drips, range_ms) do
-      new_ok(max_drips: max_drips, range_ms: range_ms)
+    def new_ok(max_drops, range_ms) do
+      new_ok(max_drops: max_drops, range_ms: range_ms)
     end
 
     def new_ok(opts) do
-      with {:ok, max_drips} <- validate_pos_integer(opts, :max_drips),
+      with {:ok, max_drops} <- validate_pos_integer(opts, :max_drops),
            {:ok, range_ms} <- validate_pos_integer(opts, :range_ms),
+           {:ok, slot_time} <- validate_pos_integer(opts, :slot_time),
            {:ok, now} <- validate_non_neg_integer(opts, :start_time),
-           range_ms |> IO.inspect(label: "range_ms"),
-           {:ok, {_, high_range} = ranges} <- calc_ranges(range_ms) do
+           :ok <- verify_slot_time(range_ms, slot_time) do
         bucket = %__MODULE__{
-          ranges: ranges,
-          max_drips: max_drips,
-          stage: 1,
-          usage: {0, 0, 0},
-          allowance: max_drips,
-          slot_end: now + high_range,
-          count: 0
+          allowance: max_drops,
+          count: 0,
+          max_drops: max_drops,
+          range_ms: range_ms,
+          refills: Q.new(),
+          slot_end: now + slot_time,
+          slot_time: slot_time,
+          slot_usage: 0,
+          last_use: now
         }
 
         {:ok, bucket}
       end
     end
 
-    defp calc_ranges(range_ms) do
-      range_ms |> IO.inspect(label: "range_ms")
-      low_range = floor(range_ms / 3)
-      high_range = range_ms - low_range * 2
-      {:ok, {low_range, high_range}}
+    defp verify_slot_time(range_ms, slot_time) do
+      if slot_time <= range_ms do
+        :ok
+      else
+        {:error, "slot time #{slot_time} is greater than range #{range_ms}"}
+      end
     end
 
-    def drop(%__MODULE__{ranges: {low_range, high_range}, slot_end: slend} = bucket, now)
-        when now >= slend do
-      # if two empty slots have passed, we should not loop until we reach the
-      # current time, because if used in a long lived application, maybe full days
-      # have passed since the last call.
-      # if so much time has passed, we will simply reset
-      twice = high_range * 2
-
-      bucket = if now - slend > twice, do: reset(bucket, now), else: rotate(bucket, now)
-
-      drop(bucket, now)
+    def drop(%__MODULE__{slot_end: slend} = bucket, now) when now >= slend do
+      bucket
+      |> rotate(now)
+      |> refill(now)
+      |> drop(now)
     end
 
-    def drop(%__MODULE__{allowance: al, usage: {u1, u2, u3}, count: c} = bucket, now)
+    def drop(%__MODULE__{allowance: al, count: c, slot_usage: used} = bucket, now)
         when al > 0 do
-      {:ok,
-       %__MODULE__{bucket | allowance: al - 1, usage: {u1, u2, u3 + 1}, count: c + 1}}
+      bucket = %__MODULE__{
+        bucket
+        | allowance: al - 1,
+          slot_usage: used + 1,
+          count: c + 1,
+          last_use: now
+      }
+
+      {:ok, bucket}
     end
 
-    def drop(%__MODULE__{allowance: al} = bucket, now) do
-      # since we will have called rotate(), we still return the updated bucket
+    def drop(bucket, _now) do
+      # since we may have called rotate(), we still return the updated bucket.
       {:reject, bucket}
     end
 
-    defp reset(%{max_drips: max_drips, ranges: {_, high_range}} = bucket, now) do
-      %__MODULE__{
-        bucket
-        | stage: 1,
-          usage: {0, 0, 0},
-          allowance: max_drips,
-          slot_end: now + high_range
-      }
-    end
-
     defp rotate(bucket, now) do
-      %{
-        stage: stage,
-        max_drips: max,
-        ranges: {low, high},
-        slot_end: slend,
-        usage: {u1, u2, u3}
+      %__MODULE__{
+        last_use: last,
+        range_ms: range_ms,
+        slot_time: sltime,
+        slot_end: old_slend,
+        refills: q,
+        slot_usage: usage
       } = bucket
 
-      {stage, slend} =
-        case stage do
-          1 -> {2, slend + low}
-          2 -> {3, slend + low}
-          3 -> {1, slend + high}
+      slend = last + sltime
+      refill_time = last + range_ms
+
+      # in order to force the data to advance in time we force the last usage
+      # date to the end of the slot that just finished
+      last = old_slend
+
+      q =
+        case usage do
+          0 -> q
+          _ -> Q.in({refill_time, usage}, q)
         end
 
-      allowance = max - (u2 + u3)
-      usage = {u2, u3, 0}
+      %__MODULE__{bucket | refills: q, slot_end: slend, slot_usage: 0, last_use: last}
+    end
 
-      %__MODULE__{
-        bucket
-        | stage: stage,
-          slot_end: slend,
-          usage: usage,
-          allowance: allowance
-      }
+    defp refill(bucket, now) do
+      %__MODULE__{refills: q, allowance: al} = bucket
+
+      case Q.out(q) do
+        {{:value, {refill_time, amount}}, new_q} when refill_time <= now ->
+          refill(%__MODULE__{bucket | allowance: al + amount, refills: new_q}, now)
+
+        _ ->
+          bucket
+      end
     end
 
     defp validate_pos_integer(opts, key) do
@@ -197,8 +207,8 @@ defmodule Ark.Drip do
     Keyword.split(opts, [:debug, :name, :timeout, :spawn_opt, :hibernate_after])
   end
 
-  defp split_gen_opts({max_drips, range_ms}) do
-    [max_drips: max_drips, range_ms: range_ms]
+  defp split_gen_opts({max_drops, range_ms}) do
+    [max_drops: max_drops, range_ms: range_ms]
   end
 
   def stop(bucket) do
@@ -262,10 +272,6 @@ defmodule Ark.Drip do
     end
   end
 
-  defp next_timeout(%{bucket: %{slot_end: slend}}, now) do
-    max(0, slend - now)
-  end
-
   # def handle_call({:await, ref}, from, %S{} = state) do
   #   Logger.debug("enqueuing")
   #   state = enqueue_client(state, {from, ref})
@@ -297,7 +303,7 @@ defmodule Ark.Drip do
   end
 
   # defp run_queue(
-  #        %S{clients: q, used: 0, max_drips: max, slot_ms: slot, next_allow: next} = state
+  #        %S{clients: q, used: 0, max_drops: max, slot_ms: slot, next_allow: next} = state
   #      ) do
   #   # TODO @optimize we should keep the queue length around instead of computing
   #   # it everytime.
@@ -353,5 +359,13 @@ defmodule Ark.Drip do
 
   def now_ms do
     :erlang.system_time(:millisecond)
+  end
+
+  defp next_timeout(%{bucket: %{slot_end: slend}}, now) do
+    t = max(0, slend - now)
+
+    if t != :ehllo do
+      raise "use a :continue to run the queue before new demands"
+    end
   end
 end
