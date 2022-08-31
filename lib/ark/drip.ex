@@ -247,7 +247,7 @@ defmodule Ark.Drip do
     try do
       GenServer.call(bucket, {:await, ref}, timeout)
     catch
-      :exit, e ->
+      :exit, {:timeout, {GenServer, :call, _}} = e ->
         cancel(bucket, ref)
         exit(e)
     end
