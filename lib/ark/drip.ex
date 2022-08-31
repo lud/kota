@@ -1,7 +1,6 @@
 defmodule Ark.Drip do
   use GenServer
   alias :queue, as: Q
-  require Logger
 
   @doc false
   def __ark__(:doc) do
@@ -54,8 +53,8 @@ defmodule Ark.Drip do
     def new_ok(opts) do
       with {:ok, max_drops} <- validate_pos_integer(opts, :max_drops),
            {:ok, range_ms} <- validate_pos_integer(opts, :range_ms),
-           {:ok, slot_time} <- validate_pos_integer(opts, :slot_time),
            {:ok, now} <- validate_non_neg_integer(opts, :start_time),
+           {:ok, slot_time} <- validate_slot_time(opts, range_ms),
            :ok <- verify_slot_time(range_ms, slot_time) do
         bucket = %__MODULE__{
           allowance: max_drops,
@@ -98,7 +97,12 @@ defmodule Ark.Drip do
           last_use: now
       }
 
-      {:ok, bucket}
+      # if the new allowance will be zero we can immediately rotate
+
+      case al do
+        1 -> {:ok, rotate(bucket, now)}
+        _ -> {:ok, bucket}
+      end
     end
 
     def drop(bucket, _now) do
@@ -107,33 +111,13 @@ defmodule Ark.Drip do
     end
 
     defp rotate(bucket, now) do
-      %__MODULE__{
-        last_use: last,
-        range_ms: range_ms,
-        slot_time: sltime,
-        slot_end: old_slend,
-        refills: q,
-        slot_usage: usage
-      } = bucket
+      %__MODULE__{last_use: last, range_ms: range_ms} = bucket
 
       if now > last + range_ms do
         reset(bucket, now)
       else
         do_rotate(bucket, now)
       end
-    end
-
-    defp reset(bucket, now) do
-      %__MODULE__{max_drops: max_drops, slot_time: slot_time} = bucket
-
-      %__MODULE__{
-        bucket
-        | allowance: max_drops,
-          refills: Q.new(),
-          slot_end: now + slot_time,
-          slot_usage: 0,
-          last_use: now
-      }
     end
 
     defp do_rotate(bucket, now) do
@@ -145,8 +129,6 @@ defmodule Ark.Drip do
         refills: q,
         slot_usage: usage
       } = bucket
-
-      IO.puts("rotate slend: #{old_slend}, now: #{now}")
 
       slend = last + sltime
       refill_time = last + range_ms
@@ -164,16 +146,34 @@ defmodule Ark.Drip do
       %__MODULE__{bucket | refills: q, slot_end: slend, slot_usage: 0, last_use: last}
     end
 
+    defp reset(bucket, now) do
+      %__MODULE__{max_drops: max_drops, slot_time: slot_time} = bucket
+
+      %__MODULE__{
+        bucket
+        | allowance: max_drops,
+          refills: Q.new(),
+          slot_end: now + slot_time,
+          slot_usage: 0,
+          last_use: now
+      }
+    end
+
     defp refill(bucket, now) do
       %__MODULE__{refills: q, allowance: al} = bucket
 
-      case Q.out(q) do
-        {{:value, {refill_time, amount}}, new_q} when refill_time <= now ->
-          refill(%__MODULE__{bucket | allowance: al + amount, refills: new_q}, now)
+      case Q.peek(q) do
+        {:value, {refill_time, amount}} when refill_time <= now ->
+          refill(%__MODULE__{bucket | allowance: al + amount, refills: Q.drop(q)}, now)
 
         _ ->
           bucket
       end
+    end
+
+    def next_refill!(%__MODULE__{refills: q}) do
+      {:value, {refill_time, _}} = Q.peek(q)
+      refill_time
     end
 
     defp validate_pos_integer(opts, key) do
@@ -202,26 +202,14 @@ defmodule Ark.Drip do
           {:error, "missing option #{inspect(key)}"}
       end
     end
+
+    defp validate_slot_time(opts, range_ms) do
+      case opts[:slot_time] do
+        :one_tenth -> {:ok, div(range_ms, 10)}
+        _ -> validate_pos_integer(opts, :slot_time)
+      end
+    end
   end
-
-  # defmacro print_usage(state) do
-  #   if Mix.env() == :test do
-  #     quote do
-  #       st = _print_usage(unquote(state))
-  #       Logger.flush()
-  #       st
-  #     end
-  #   else
-  #     quote do
-  #       state
-  #     end
-  #   end
-  # end
-
-  # def _print_usage(%{count: count, used: used} = state) do
-  #   Logger.debug("count: #{count + used} (#{used})")
-  #   state
-  # end
 
   # @moduledoc false
 
@@ -277,12 +265,13 @@ defmodule Ark.Drip do
 
   @impl GenServer
   def init(opts) do
-    opts = Keyword.put_new(opts, :start_time, now_ms())
-    opts |> IO.inspect(label: "opts")
+    opts =
+      opts
+      |> Keyword.put_new(:start_time, now_ms())
+      |> Keyword.put_new(:slot_time, :one_tenth)
 
-    with {:ok, bucket} <- Bucket.new_ok(opts) do
-      {:ok, %S{bucket: bucket, clients: Q.new()}}
-    else
+    case Bucket.new_ok(opts) do
+      {:ok, bucket} -> {:ok, %S{bucket: bucket, clients: Q.new()}}
       {:error, reason} -> {:stop, reason}
     end
   end
@@ -293,26 +282,18 @@ defmodule Ark.Drip do
 
     case Bucket.drop(bucket, now) do
       {:ok, bucket} ->
-        Logger.debug("direct handle")
         state = %S{state | bucket: bucket}
         {:reply, :ok, state, :infinity}
 
       {:reject, bucket} ->
-        Logger.debug("enqueue")
         state = %S{state | bucket: bucket, clients: Q.in({from, ref}, q)}
+
         {:noreply, state, next_timeout(state, now)}
     end
   end
 
-  # def handle_call({:await, ref}, from, %S{} = state) do
-  #   Logger.debug("enqueuing")
-  #   state = enqueue_client(state, {from, ref})
-  #   {:noreply, state, next_timeout(state)}
-  # end
-
   @impl GenServer
   def handle_info(:timeout, %S{bucket: bucket, clients: q} = state) do
-    Logger.debug("-- timeout -----------------------")
     state = run_queue(state)
     {:noreply, state, next_timeout(state, now_ms())}
   end
@@ -334,28 +315,6 @@ defmodule Ark.Drip do
     end
   end
 
-  # defp run_queue(
-  #        %S{clients: q, used: 0, max_drops: max, slot_ms: slot, next_allow: next} = state
-  #      ) do
-  #   # TODO @optimize we should keep the queue length around instead of computing
-  #   # it everytime.
-  #   len = Q.len(q)
-
-  #   take_n = if len >= max, do: max, else: len
-
-  #   Logger.debug("running #{take_n} from queue")
-
-  #   {runnables, q} = Q.split(take_n, q)
-
-  #   _ = Q.fold(fn {from, _}, _ -> GenServer.reply(from, :ok) end, nil, runnables)
-
-  #   print_usage(%S{state | used: take_n, next_allow: next + slot * take_n, clients: q})
-  # end
-
-  # defp run_queue(%S{} = state) do
-  #   state
-  # end
-
   @impl GenServer
   def handle_cast({:cancel, ref}, %S{clients: clients} = state) do
     clients =
@@ -370,34 +329,18 @@ defmodule Ark.Drip do
     {:noreply, %S{state | clients: clients}}
   end
 
-  # defp enqueue_client(state, client) do
-  #   q = Q.in(client, state.clients)
-  #   %S{state | clients: q}
-  # end
-
-  # defp next_timeout(%{clients: clients, next_allow: next} = state) do
-  #   # timeout = max(0, next - now_ms())
-
-  #   t =
-  #     case Q.is_empty(clients) do
-  #       true -> :infinity
-  #       false -> max(0, next - now_ms())
-  #     end
-
-  #   Logger.debug("next timeout: #{t}")
-  #   Logger.flush()
-  #   t
-  # end
-
   def now_ms do
     :erlang.system_time(:millisecond)
   end
 
-  defp next_timeout(%{bucket: %{slot_end: slend}}, now) do
-    t = max(0, slend - now)
-
-    if t != :ehllo do
-      raise "use a :continue to run the queue before new demands"
+  defp next_timeout(
+         %{bucket: %Bucket{allowance: al, slot_end: slend} = bucket, clients: q},
+         now
+       ) do
+    if al == 0 do
+      max(0, Bucket.next_refill!(bucket) - now)
+    else
+      :infinity
     end
   end
 end

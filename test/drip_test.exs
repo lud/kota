@@ -38,7 +38,7 @@ defmodule Ark.DripTest do
   end
 
   test "drip" do
-    {:ok, pid} = Drip.start_link(max_drips: 10, range_ms: 1000)
+    {:ok, pid} = Drip.start_link(max_drops: 10, range_ms: 1000)
     t1 = :erlang.system_time(:millisecond)
 
     tasks =
@@ -57,7 +57,7 @@ defmodule Ark.DripTest do
   end
 
   test "1 drip slow" do
-    Drip.start_link(max_drips: 1, range_ms: 1_000, name: __MODULE__.DripSlow)
+    Drip.start_link(max_drops: 1, range_ms: 1_000, name: __MODULE__.DripSlow)
     # The first call should be immediate and the second should wait
     # 1000 ms
     t1 = :erlang.system_time(:millisecond)
@@ -76,7 +76,7 @@ defmodule Ark.DripTest do
   end
 
   test "drip timeout" do
-    {:ok, pid} = Drip.start_link(max_drips: 10, range_ms: 1000, name: nil)
+    {:ok, pid} = Drip.start_link(max_drops: 10, range_ms: 1000, name: nil)
 
     # Run different batches :
     # - batch 1 (20) with a timeout of 500 will have 10 tasks ok and 10 taks timeout
@@ -97,7 +97,7 @@ defmodule Ark.DripTest do
   end
 
   test "100 drips" do
-    Drip.start_link(max_drips: 10, range_ms: 100, name: __MODULE__.Drip)
+    Drip.start_link(max_drops: 10, range_ms: 100, name: __MODULE__.Drip)
     t1 = :erlang.system_time(:millisecond)
 
     tasks =
@@ -114,14 +114,11 @@ defmodule Ark.DripTest do
   end
 
   test "long loop" do
-    {:ok, drip} = Drip.start_link(max_drips: 3, range_ms: 1000)
+    {:ok, drip} = Drip.start_link(max_drops: 3, range_ms: 1000)
 
     count = n_call(drip, 2, 0)
-    sleep_log(2000)
     count = n_call(drip, 4, count)
-    sleep_log(300)
     count = n_call(drip, 1, count)
-    sleep_log(300)
     count = n_call(drip, 10, count)
   end
 
@@ -130,15 +127,13 @@ defmodule Ark.DripTest do
     # right after. The second group must be delayed. To verify that, there
     # should be one second difference between the 1st drip and the 4th.
 
-    {:ok, drip} = Drip.start_link(max_drips: 3, range_ms: 1000)
+    {:ok, drip} = Drip.start_link(max_drops: 3, range_ms: 1000)
     Process.sleep(700)
 
     f = fn ->
       Drip.await(drip)
 
-      t =
-        :erlang.system_time(:millisecond)
-        |> IO.inspect(label: "t")
+      t = :erlang.system_time(:millisecond)
     end
 
     items = [f.(), f.(), f.(), f.(), f.(), f.()]
@@ -157,7 +152,7 @@ defmodule Ark.DripTest do
 
   test "Drip under supervision" do
     children = [
-      {Ark.Drip, spec: {10, 1100}}
+      {Ark.Drip, max_drops: 10, range_ms: 1100}
     ]
 
     # See https://hexdocs.pm/elixir/Supervisor.html
@@ -179,10 +174,5 @@ defmodule Ark.DripTest do
     # t = :erlang.system_time(:millisecond)
     # IO.inspect(t, label: label)
     n_call(drip, n - 1, new_count)
-  end
-
-  defp sleep_log(n) do
-    IO.puts("sleep #{n}")
-    Process.sleep(n)
   end
 end

@@ -58,17 +58,13 @@ defmodule Ark.Drip.BucketTest do
 
     # we are moving time to slot 2/3. calls should still be rejected
 
-    b |> IO.inspect(label: "b before 111")
     assert {:reject, b} = Bucket.drop(b, 111)
-    b |> IO.inspect(label: "b at 111")
 
     # same with slot 3/3
 
     assert {:reject, b} = Bucket.drop(b, 222)
 
     # now our bucket should be full and we can drop anew
-
-    Bucket.drop(b, 300) |> IO.inspect(label: "reject")
 
     assert {:ok, b} = Bucket.drop(b, 300)
     assert {:ok, b} = Bucket.drop(b, 300)
@@ -96,17 +92,13 @@ defmodule Ark.Drip.BucketTest do
 
     # we are moving time to slot 2/3. calls should still be rejected
 
-    b |> IO.inspect(label: "b before 111")
     assert {:reject, _} = Bucket.drop(b, 111)
-    b |> IO.inspect(label: "b at 111")
 
     # same with slot 3/3
 
     assert {:reject, _} = Bucket.drop(b, 222)
 
     # now our bucket should be full and we can drop anew
-
-    Bucket.drop(b, 300) |> IO.inspect(label: "reject")
 
     assert {:ok, b} = Bucket.drop(b, 300)
     assert {:ok, b} = Bucket.drop(b, 300)
@@ -123,8 +115,6 @@ defmodule Ark.Drip.BucketTest do
     assert {:ok, b} = Bucket.drop(b, 299)
 
     assert %{allowance: 0} = b
-
-    b.refills |> IO.inspect(label: "b.refills")
 
     # since we consumed 3 on the third third of the time period, we should only
     # be able to consume in the third third of the second period
@@ -206,14 +196,9 @@ defmodule Ark.Drip.BucketTest do
       case Bucket.drop(bucket, now) do
         {:reject, bucket} ->
           new_now = now + warp_time
-          new_now |> IO.inspect(label: "warp to")
           f.(f, bucket, new_now)
 
         {:ok, bucket} ->
-          if now >= 300 do
-            bucket |> IO.inspect(label: "bucket")
-          end
-
           {bucket, now}
       end
     end
@@ -221,9 +206,7 @@ defmodule Ark.Drip.BucketTest do
     {b, end_time, times} =
       Enum.reduce(1..iterations, {bucket, 0, []}, fn n, {bucket, now, times} ->
         {bucket, accepted_now} = loop.(loop, bucket, now)
-        accepted_now |> IO.inspect(label: "accepted now")
         next_now = accepted_now + rem(accepted_now, 3)
-        next_now |> IO.inspect(label: "next_now")
         {bucket, next_now, [accepted_now | times]}
       end)
 
@@ -249,7 +232,6 @@ defmodule Ark.Drip.BucketTest do
 
     sums =
       Enum.map(windows, fn window ->
-        window |> IO.inspect(label: "window")
         sum = Enum.reduce(window, 0, fn {_, n}, acc -> acc + n end)
 
         if sum > max_drops do
