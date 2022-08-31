@@ -116,11 +116,11 @@ defmodule Ark.Drip do
       if now > last + range_ms do
         reset(bucket, now)
       else
-        do_rotate(bucket, now)
+        do_rotate(bucket)
       end
     end
 
-    defp do_rotate(bucket, now) do
+    defp do_rotate(bucket) do
       %__MODULE__{
         last_use: last,
         range_ms: range_ms,
@@ -293,7 +293,7 @@ defmodule Ark.Drip do
   end
 
   @impl GenServer
-  def handle_info(:timeout, %S{bucket: bucket, clients: q} = state) do
+  def handle_info(:timeout, state) do
     state = run_queue(state)
     {:noreply, state, next_timeout(state, now_ms())}
   end
@@ -333,10 +333,7 @@ defmodule Ark.Drip do
     :erlang.system_time(:millisecond)
   end
 
-  defp next_timeout(
-         %{bucket: %Bucket{allowance: al, slot_end: slend} = bucket, clients: q},
-         now
-       ) do
+  defp next_timeout(%{bucket: %Bucket{allowance: al} = bucket}, now) do
     if al == 0 do
       max(0, Bucket.next_refill!(bucket) - now)
     else
