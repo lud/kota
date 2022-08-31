@@ -116,6 +116,38 @@ defmodule Ark.Drip do
         slot_usage: usage
       } = bucket
 
+      if now > last + range_ms do
+        reset(bucket, now)
+      else
+        do_rotate(bucket, now)
+      end
+    end
+
+    defp reset(bucket, now) do
+      %__MODULE__{max_drops: max_drops, slot_time: slot_time} = bucket
+
+      %__MODULE__{
+        bucket
+        | allowance: max_drops,
+          refills: Q.new(),
+          slot_end: now + slot_time,
+          slot_usage: 0,
+          last_use: now
+      }
+    end
+
+    defp do_rotate(bucket, now) do
+      %__MODULE__{
+        last_use: last,
+        range_ms: range_ms,
+        slot_time: sltime,
+        slot_end: old_slend,
+        refills: q,
+        slot_usage: usage
+      } = bucket
+
+      IO.puts("rotate slend: #{old_slend}, now: #{now}")
+
       slend = last + sltime
       refill_time = last + range_ms
 

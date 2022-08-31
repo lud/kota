@@ -258,30 +258,29 @@ defmodule Ark.Drip.BucketTest do
       end)
 
     assert end_time < maximum_expected_time
-    end_time |> IO.inspect(label: "end_time")
   end
 
-  # test "large gaps in time will simply reset the stage" do
-  #  raise "todo make a test that would take years to complete without the optimisation
-  #   b = test_bucket(3, 1000, 0)
+  test "large gaps in time will simply reset the stage" do
+    b = test_bucket(3, 1000, 0)
 
-  #   # we can immediately enqueue the full capacity at time zero
+    # we can immediately enqueue the full capacity at time zero
 
-  #   assert {:ok, b} = Bucket.drop(b, 997)
-  #   assert {:ok, b} = Bucket.drop(b, 998)
-  #   assert {:ok, b} = Bucket.drop(b, 999)
+    assert {:ok, b} = Bucket.drop(b, 997)
+    assert {:ok, b} = Bucket.drop(b, 998)
+    assert {:ok, b} = Bucket.drop(b, 999)
 
-  #   assert %{allowance: 0} = b
+    assert %{allowance: 0} = b
 
-  #   # ten seconds after, we should be in slot 3/3 but so much time has passed,
-  #   # the state will reset
+    # ten seconds after, we should be in slot 3/3 but so much time has passed,
+    # the state will reset
 
-  #   assert {:ok, b} = Bucket.drop(b, 10_000 + 997)
-  #   assert {:ok, b} = Bucket.drop(b, 10_000 + 998)
-  #   assert {:ok, b} = Bucket.drop(b, 10_000 + 999)
+    # We use very large numbers so without the optimization the test never
+    # completes
 
-  #   # the count is not reset
-  #   assert 1 == b.stage
-  #   assert 6 == b.count
-  # end
+    assert {:ok, b} = Bucket.drop(b, 999_999_999_999_999_999)
+
+    # the count is not reset
+    assert 4 == b.count
+    assert 2 == b.allowance
+  end
 end
