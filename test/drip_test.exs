@@ -2,6 +2,11 @@ defmodule Ark.DripTest do
   use ExUnit.Case, async: true
   alias Ark.Drip
 
+  defp sleep_log(n) do
+    IO.puts("sleep #{n}")
+    Process.sleep(n)
+  end
+
   defmodule H do
     def task(drip, id) do
       Task.async(fn ->
@@ -64,11 +69,11 @@ defmodule Ark.DripTest do
     H.task(__MODULE__.DripSlow, :slow_1) |> Task.await()
     H.task(__MODULE__.DripSlow, :slow_2) |> Task.await()
     t2 = :erlang.system_time(:millisecond)
-    assert t2 - t1 > 1000
+    assert t2 - t1 >= 1000
     assert t2 - t1 < 1100
     # If the Drip is idle (time is waited long before), the call should be
     # immediate, so we expect it took least than 10 ms
-    Process.sleep(1_000)
+    sleep_log(1_000)
     t1 = :erlang.system_time(:millisecond)
     H.task(__MODULE__.DripSlow, :slow_3) |> Task.await()
     t2 = :erlang.system_time(:millisecond)
@@ -86,9 +91,9 @@ defmodule Ark.DripTest do
     # - batch 3 (20) with timeout of 2500 wil have ok/fail 10/10
 
     batch_1 = for(n <- 1..20, do: H.task_timeout(pid, "A #{n}", 500))
-    Process.sleep(50)
+    sleep_log(50)
     batch_2 = for(n <- 1..10, do: H.task_timeout(pid, "B #{n}", 1200))
-    Process.sleep(50)
+    sleep_log(50)
     batch_3 = for(n <- 1..20, do: H.task_timeout(pid, "C #{n}", 2500))
 
     assert_batch(batch_1, 10, 10)
@@ -113,22 +118,13 @@ defmodule Ark.DripTest do
     assert t2 - t1 < 1100
   end
 
-  test "long loop" do
-    {:ok, drip} = Drip.start_link(max_drops: 3, range_ms: 1000)
-
-    count = n_call(drip, 2, 0)
-    count = n_call(drip, 4, count)
-    count = n_call(drip, 1, count)
-    count = n_call(drip, 10, count)
-  end
-
   test "window boundaries" do
     # Here we will ask 3 drips right before the first window end, and 3 more
     # right after. The second group must be delayed. To verify that, there
     # should be one second difference between the 1st drip and the 4th.
 
     {:ok, drip} = Drip.start_link(max_drops: 3, range_ms: 1000)
-    Process.sleep(700)
+    sleep_log(700)
 
     f = fn ->
       Drip.await(drip)
@@ -138,7 +134,7 @@ defmodule Ark.DripTest do
 
     items = [f.(), f.(), f.(), f.(), f.(), f.()]
 
-    assert Enum.at(items, 3) - Enum.at(items, 0) > 1000
+    assert Enum.at(items, 3) - Enum.at(items, 0) >= 1000
   end
 
   defp assert_batch(tasks, expected_ok, expected_timeout) do
