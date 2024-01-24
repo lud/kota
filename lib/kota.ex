@@ -1,14 +1,6 @@
-defmodule Ark.Drip do
+defmodule Kota do
   use GenServer
   alias :queue, as: Q
-
-  @doc false
-  def __ark__(:doc) do
-    """
-    This module allows to throttle calls to a shared resource with a simple
-    broker process.
-    """
-  end
 
   defmodule Bucket do
     @enforce_keys [

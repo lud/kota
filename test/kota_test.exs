@@ -1,6 +1,6 @@
-defmodule Ark.DripTest do
+defmodule KotaTest do
   use ExUnit.Case, async: true
-  alias Ark.Drip
+  alias Kota
 
   defp sleep_log(n) do
     IO.puts("sleep #{n}")
@@ -10,7 +10,7 @@ defmodule Ark.DripTest do
   defmodule H do
     def task(drip, id) do
       Task.async(fn ->
-        :ok = Drip.await(drip)
+        :ok = Kota.await(drip)
         IO.puts("drop [#{id}] #{inspect(self())} #{:erlang.system_time(:second)}")
       end)
     end
@@ -20,7 +20,7 @@ defmodule Ark.DripTest do
         IO.puts("await [#{id}] timeout=#{timeout}")
 
         try do
-          :ok = Drip.await(drip, timeout)
+          :ok = Kota.await(drip, timeout)
           IO.puts("drop [#{id}] #{inspect(self())} #{:erlang.system_time(:second)}")
           :ok
         catch
@@ -43,7 +43,7 @@ defmodule Ark.DripTest do
   end
 
   test "drip" do
-    {:ok, pid} = Drip.start_link(max_drops: 10, range_ms: 1000)
+    {:ok, pid} = Kota.start_link(max_drops: 10, range_ms: 1000)
     t1 = :erlang.system_time(:millisecond)
 
     tasks =
@@ -62,7 +62,7 @@ defmodule Ark.DripTest do
   end
 
   test "1 drip slow" do
-    Drip.start_link(max_drops: 1, range_ms: 1_000, name: __MODULE__.DripSlow)
+    Kota.start_link(max_drops: 1, range_ms: 1_000, name: __MODULE__.DripSlow)
     # The first call should be immediate and the second should wait
     # 1000 ms
     t1 = :erlang.system_time(:millisecond)
@@ -81,7 +81,7 @@ defmodule Ark.DripTest do
   end
 
   test "drip timeout" do
-    {:ok, pid} = Drip.start_link(max_drops: 10, range_ms: 1000, name: nil)
+    {:ok, pid} = Kota.start_link(max_drops: 10, range_ms: 1000, name: nil)
 
     # Run different batches :
     # - batch 1 (20) with a timeout of 500 will have 10 tasks ok and 10 taks timeout
@@ -102,7 +102,7 @@ defmodule Ark.DripTest do
   end
 
   test "100 drips" do
-    Drip.start_link(max_drops: 10, range_ms: 100, name: __MODULE__.Drip)
+    Kota.start_link(max_drops: 10, range_ms: 100, name: __MODULE__.Drip)
     t1 = :erlang.system_time(:millisecond)
 
     tasks =
@@ -123,11 +123,11 @@ defmodule Ark.DripTest do
     # right after. The second group must be delayed. To verify that, there
     # should be one second difference between the 1st drip and the 4th.
 
-    {:ok, drip} = Drip.start_link(max_drops: 3, range_ms: 1000)
+    {:ok, drip} = Kota.start_link(max_drops: 3, range_ms: 1000)
     sleep_log(700)
 
     f = fn ->
-      Drip.await(drip)
+      Kota.await(drip)
 
       t = :erlang.system_time(:millisecond)
     end
@@ -141,14 +141,14 @@ defmodule Ark.DripTest do
     {oks, tos} =
       tasks
       |> Enum.map(&Task.await(&1, :infinity))
-      |> Enum.split_with(&Ark.Ok.ok?/1)
+      |> Enum.split_with(&ok?/1)
 
     assert %{oks: expected_ok, tos: expected_timeout} = %{oks: oks, tos: tos}
   end
 
   test "Drip under supervision" do
     children = [
-      {Ark.Drip, max_drops: 10, range_ms: 1100}
+      {Kota, max_drops: 10, range_ms: 1100}
     ]
 
     # See https://hexdocs.pm/elixir/Supervisor.html
@@ -166,9 +166,12 @@ defmodule Ark.DripTest do
   defp n_call(drip, n, count) when is_integer(n) do
     new_count = count + 1
     label = new_count |> Integer.to_string() |> String.pad_leading(5)
-    Drip.await(drip)
+    Kota.await(drip)
     # t = :erlang.system_time(:millisecond)
     # IO.inspect(t, label: label)
     n_call(drip, n - 1, new_count)
   end
+
+  defp ok?({:ok, _}), do: true
+  defp ok?(_), do: false
 end

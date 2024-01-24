@@ -1,6 +1,6 @@
-defmodule Ark.Drip.BucketTest do
+defmodule Kota.BucketTest do
   use ExUnit.Case, async: true
-  alias Ark.Drip.Bucket
+  alias Kota.Bucket
 
   defp test_bucket(max_drops, range_ms, start_time, slot_time \\ 10) do
     assert {:ok, bucket} =
