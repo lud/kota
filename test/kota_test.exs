@@ -11,7 +11,7 @@ defmodule KotaTest do
     def task(drip, id) do
       Task.async(fn ->
         :ok = Kota.await(drip)
-        IO.puts("drop [#{id}] #{inspect(self())} #{:erlang.system_time(:second)}")
+        IO.puts("drip [#{id}] #{inspect(self())} #{:erlang.system_time(:second)}")
       end)
     end
 
@@ -21,7 +21,7 @@ defmodule KotaTest do
 
         try do
           :ok = Kota.await(drip, timeout)
-          IO.puts("drop [#{id}] #{inspect(self())} #{:erlang.system_time(:second)}")
+          IO.puts("drip [#{id}] #{inspect(self())} #{:erlang.system_time(:second)}")
           :ok
         catch
           :exit, _ ->
@@ -43,7 +43,7 @@ defmodule KotaTest do
   end
 
   test "drip" do
-    {:ok, pid} = Kota.start_link(max_drops: 10, range_ms: 1000)
+    {:ok, pid} = Kota.start_link(max_allow: 10, range_ms: 1000)
     t1 = :erlang.system_time(:millisecond)
 
     tasks =
@@ -62,7 +62,7 @@ defmodule KotaTest do
   end
 
   test "1 drip slow" do
-    Kota.start_link(max_drops: 1, range_ms: 1_000, name: __MODULE__.DripSlow)
+    Kota.start_link(max_allow: 1, range_ms: 1_000, name: __MODULE__.DripSlow)
     # The first call should be immediate and the second should wait
     # 1000 ms
     t1 = :erlang.system_time(:millisecond)
@@ -81,7 +81,7 @@ defmodule KotaTest do
   end
 
   test "drip timeout" do
-    {:ok, pid} = Kota.start_link(max_drops: 10, range_ms: 1000, name: nil)
+    {:ok, pid} = Kota.start_link(max_allow: 10, range_ms: 1000, name: nil)
 
     # Run different batches :
     # - batch 1 (20) with a timeout of 500 will have 10 tasks ok and 10 taks timeout
@@ -102,7 +102,7 @@ defmodule KotaTest do
   end
 
   test "100 drips" do
-    Kota.start_link(max_drops: 10, range_ms: 100, name: __MODULE__.Drip)
+    Kota.start_link(max_allow: 10, range_ms: 100, name: __MODULE__.Drip)
     t1 = :erlang.system_time(:millisecond)
 
     tasks =
@@ -123,7 +123,7 @@ defmodule KotaTest do
     # right after. The second group must be delayed. To verify that, there
     # should be one second difference between the 1st drip and the 4th.
 
-    {:ok, drip} = Kota.start_link(max_drops: 3, range_ms: 1000)
+    {:ok, drip} = Kota.start_link(max_allow: 3, range_ms: 1000)
     sleep_log(700)
 
     f = fn ->
@@ -148,7 +148,7 @@ defmodule KotaTest do
 
   test "Drip under supervision" do
     children = [
-      {Kota, max_drops: 10, range_ms: 1100}
+      {Kota, max_allow: 10, range_ms: 1100}
     ]
 
     # See https://hexdocs.pm/elixir/Supervisor.html
