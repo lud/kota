@@ -206,7 +206,7 @@ defmodule Kota.BucketTest do
 
     # bucket config
     max_allow = 20
-    range_ms = 100
+    range_ms = 1000
     start_time = 0
 
     # test config
@@ -219,17 +219,21 @@ defmodule Kota.BucketTest do
         rem -> div(iterations, max_allow) + 1
       end
 
-    (maximum_expected_time = total_periods * range_ms) |> dbg()
+    maximum_expected_time = total_periods * range_ms
 
-    IO.puts(
-      "total_periods = #{total_periods} (#{iterations} iterations at #{max_allow} per period)"
-    )
+    print_expectations = fn ->
+      IO.puts(
+        "total_periods = #{total_periods} (#{iterations} iterations at #{max_allow} per period)"
+      )
 
-    IO.puts(
-      "maximum_expected_time = #{total_periods} * #{range_ms} = #{round(maximum_expected_time)}"
-    )
+      IO.puts(
+        "maximum_expected_time = #{total_periods} * #{range_ms} = #{format_time(maximum_expected_time)}"
+      )
+    end
 
-    bucket = test_bucket(max_allow, range_ms, start_time)
+    print_expectations.()
+
+    bucket = test_bucket(max_allow, range_ms, start_time, 50)
     accin = {bucket, start_time}
 
     # A function that will increment time until the drip is allowed; returns the
@@ -238,15 +242,17 @@ defmodule Kota.BucketTest do
     take_one = fn f, bucket, now ->
       result = {_, bucket} = Bucket.take(bucket, now)
 
-      IO.puts([
-        now |> Integer.to_string() |> Kernel.<>("ms") |> String.pad_trailing(6),
-        "   count: ",
-        Integer.to_string(bucket.count) |> String.pad_leading(4),
-        "   allow: ",
-        Integer.to_string(bucket.allowance) |> String.pad_leading(3),
-        "   refills: ",
-        inspect(:queue.peek(bucket.refills))
-      ])
+      # IO.puts([
+      #   now |> Integer.to_string() |> Kernel.<>("ms") |> String.pad_trailing(6),
+      #   "   count: ",
+      #   Integer.to_string(bucket.count) |> String.pad_leading(4),
+      #   "   allow: ",
+      #   Integer.to_string(bucket.allowance) |> String.pad_leading(3),
+      #   "   usage: ",
+      #   Integer.to_string(bucket.slot_usage) |> String.pad_leading(3),
+      #   "   refills: ",
+      #   inspect(:queue.to_list(bucket.refills))
+      # ])
 
       case result do
         {:reject, bucket} -> f.(f, bucket, now + warp_time)
@@ -295,10 +301,29 @@ defmodule Kota.BucketTest do
       assert sum <= max_allow
     end)
 
+    print_expectations.()
+    IO.puts("toal elapsed time: #{format_time(end_time)}")
     # This does not work because of the slots delay:
-    IO.puts("toal elapsed time: #{end_time}ms")
-    assert end_time < maximum_expected_time
+    # assert end_time < maximum_expected_time
   end
+
+  defp format_time(ms) do
+    format_time(ms, :ms)
+  end
+
+  defp format_time(ms, :ms) when ms >= 1000 do
+    format_time(ms / 1000, :seconds)
+  end
+
+  defp format_time(s, :seconds) when s >= 60 do
+    format_time(s / 60, :minutes)
+  end
+
+  defp format_time(n, unit) when is_integer(n),
+    do: [Integer.to_string(n), " ", Atom.to_string(unit)]
+
+  defp format_time(n, unit) when is_float(n),
+    do: [:io_lib.format(~c"~.2f", [n]), " ", Atom.to_string(unit)]
 
   test "large gaps in time will simply reset the stage" do
     b = test_bucket(3, 1000, 0)

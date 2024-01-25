@@ -1,4 +1,5 @@
 defmodule Kota.Bucket do
+  @moduledoc false
   @enforce_keys [
     # Duration within which `max_allow` allowances will be given.
     :range_ms,
@@ -25,7 +26,7 @@ defmodule Kota.Bucket do
     # amount of the current usage.
     :refills,
 
-    # Timestamp of the last take or slot rotation, which will delimit the new
+    # Timestamp of the last take or slot closing, which will delimit the new
     # time slot and refill time.
     :last_change,
 
@@ -86,7 +87,7 @@ defmodule Kota.Bucket do
         last_change: now
     }
 
-    # if the new allowance will be zero we can immediately close_slot
+    # If the new allowance will be zero we can immediately close_slot
 
     case al do
       1 -> {:ok, close_slot(bucket, now)}
@@ -200,7 +201,7 @@ defmodule Kota.Bucket do
   end
 
   defp validate_slot_ms(opts, range_ms) do
-    case opts[:slot_ms] |> dbg() do
+    case opts[:slot_ms] do
       :one_tenth -> {:ok, div(range_ms, 10)}
       _ -> validate_pos_integer(opts, :slot_ms)
     end

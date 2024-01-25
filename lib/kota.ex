@@ -1,4 +1,5 @@
 defmodule Kota do
+  @moduledoc false
   alias :queue, as: Q
   use GenServer
   alias Kota.Bucket
@@ -48,8 +49,8 @@ defmodule Kota do
   end
 
   defmodule S do
+    @moduledoc false
     @enforce_keys [:bucket, :clients]
-
     defstruct @enforce_keys
   end
 
