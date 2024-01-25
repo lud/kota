@@ -216,7 +216,7 @@ defmodule Kota.BucketTest do
     total_periods =
       case rem(iterations, max_allow) do
         0 -> div(iterations, max_allow)
-        rem -> div(iterations, max_allow) + 1
+        _ -> div(iterations, max_allow) + 1
       end
 
     maximum_expected_time = total_periods * range_ms
@@ -234,13 +234,12 @@ defmodule Kota.BucketTest do
     print_expectations.()
 
     bucket = test_bucket(max_allow, range_ms, start_time, 50)
-    accin = {bucket, start_time}
 
     # A function that will increment time until the drip is allowed; returns the
     # new bucket and the new time.
 
     take_one = fn f, bucket, now ->
-      result = {_, bucket} = Bucket.take(bucket, now)
+      result = {_, _bucket} = Bucket.take(bucket, now)
 
       # IO.puts([
       #   now |> Integer.to_string() |> Kernel.<>("ms") |> String.pad_trailing(6),
@@ -261,7 +260,7 @@ defmodule Kota.BucketTest do
     end
 
     {b, end_time, times} =
-      Enum.reduce(1..iterations, {bucket, 0, []}, fn n, {bucket, now, times} ->
+      Enum.reduce(1..iterations, {bucket, 0, []}, fn _n, {bucket, now, times} ->
         {bucket, accepted_now} = take_one.(take_one, bucket, now)
         # Force time advancement to trigger the slot delay
         next_now = accepted_now + 1
@@ -287,10 +286,9 @@ defmodule Kota.BucketTest do
         {_, list} = Enum.split(freqs, index_start)
         [{first_freq_start, _} | _] = list
 
-        list =
-          Enum.take_while(list, fn {freq_start, _} ->
-            freq_start < first_freq_start + range_ms
-          end)
+        Enum.take_while(list, fn {freq_start, _} ->
+          freq_start < first_freq_start + range_ms
+        end)
       end
 
     # For each window we sum the number of takes, and check that it respects the
