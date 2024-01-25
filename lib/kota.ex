@@ -58,7 +58,7 @@ defmodule Kota do
     opts =
       opts
       |> Keyword.put_new(:start_time, now_ms())
-      |> Keyword.put_new(:slot_time, :one_tenth)
+      |> Keyword.put_new(:slot_ms, :one_tenth)
 
     case Bucket.new_ok(opts) do
       {:ok, bucket} -> {:ok, %S{bucket: bucket, clients: Q.new()}}

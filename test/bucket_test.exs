@@ -2,22 +2,22 @@ defmodule Kota.BucketTest do
   use ExUnit.Case, async: true
   alias Kota.Bucket
 
-  defp test_bucket(max_allow, range_ms, start_time, slot_time \\ 10) do
+  defp test_bucket(max_allow, range_ms, start_time, slot_ms \\ 10) do
     assert {:ok, bucket} =
              Bucket.new_ok(
                max_allow: max_allow,
                range_ms: range_ms,
                start_time: start_time,
-               slot_time: slot_time
+               slot_ms: slot_ms
              )
 
-    expected_slot_time = start_time + slot_time
-    expected_slot_end = expected_slot_time
+    expected_slot_ms = start_time + slot_ms
+    expected_slot_end = expected_slot_ms
 
     assert %Bucket{
              range_ms: ^range_ms,
              slot_usage: 0,
-             slot_time: ^expected_slot_time,
+             slot_ms: ^expected_slot_ms,
              slot_end: ^expected_slot_end,
              count: 0,
              refills: _,
@@ -30,14 +30,14 @@ defmodule Kota.BucketTest do
 
   test "bucket force divisible time slot" do
     assert {:ok, _} =
-             Bucket.new_ok(max_allow: 1, range_ms: 1000, start_time: 0, slot_time: 10)
+             Bucket.new_ok(max_allow: 1, range_ms: 1000, start_time: 0, slot_ms: 10)
 
     assert {:error, "slot time 999999 is greater than range 1000"} =
              Bucket.new_ok(
                max_allow: 1,
                range_ms: 1000,
                start_time: 0,
-               slot_time: 999_999
+               slot_ms: 999_999
              )
   end
 
@@ -68,7 +68,7 @@ defmodule Kota.BucketTest do
 
     assert {:ok, b} = Bucket.take(b, 300)
     assert {:ok, b} = Bucket.take(b, 300)
-    assert {:ok, b} = Bucket.take(b, 300)
+    assert {:ok, _b} = Bucket.take(b, 300)
   end
 
   test "ignoring returned bucket from rejections works" do
@@ -102,7 +102,7 @@ defmodule Kota.BucketTest do
 
     assert {:ok, b} = Bucket.take(b, 300)
     assert {:ok, b} = Bucket.take(b, 300)
-    assert {:ok, b} = Bucket.take(b, 300)
+    assert {:ok, _b} = Bucket.take(b, 300)
   end
 
   test "threes, consume late" do
@@ -126,21 +126,22 @@ defmodule Kota.BucketTest do
     assert {:reject, b} = Bucket.take(b, 300 + 200)
     assert {:reject, b} = Bucket.take(b, 300 + 250)
 
-    # The time slot is 10 by default in this test, and the last successful call was
-    # at 299, so at 300 + 299 (599) we should be able to call
+    # The time slot is 10 by default in this test, and the last successful call
+    # was at 299, so at 300 + 299 (599) we should be able to call
 
     assert {:reject, b} = Bucket.take(b, 300 + 297)
     assert {:reject, b} = Bucket.take(b, 300 + 298)
 
     assert {:ok, b} = Bucket.take(b, 300 + 299)
     assert {:ok, b} = Bucket.take(b, 300 + 299)
-    assert {:ok, b} = Bucket.take(b, 300 + 299)
+    assert {:ok, _b} = Bucket.take(b, 300 + 299)
   end
 
   test "threes, consume irregular" do
     b = test_bucket(3, 1000, 0)
 
-    # we consume one in the 1/3, and two in the 2/3
+    # we consume one in the first third of the second (1..333 ms), and two in
+    # the "2/3" (second third)
 
     assert {:ok, b} = Bucket.take(b, 0)
     assert {:ok, b} = Bucket.take(b, 400)
@@ -151,25 +152,57 @@ defmodule Kota.BucketTest do
     assert {:reject, b} = Bucket.take(b, 400)
     assert {:reject, b} = Bucket.take(b, 999)
 
-    # in the second period we can consume one from the 1/3 and 2 in the 2/3
-
+    # in the second period we can consume only one in the 1/3
     assert {:ok, branch1} = Bucket.take(b, 1000 + 0)
-    assert {:reject, branch1} = Bucket.take(branch1, 1000 + 0)
-    assert {:ok, branch1} = Bucket.take(b, 1000 + 400)
-    assert {:ok, branch1} = Bucket.take(b, 1000 + 400)
+    # not two, as it is not refilled
+    assert {:reject, ^branch1} = Bucket.take(branch1, 1000 + 0)
 
-    # but if we don't, we can also consume 3 if we wait for the 3/3
+    # Alternatively we can consume three as soon as the 1400th millisecond, as
+    # we previously exhausted the bucket so the slot was closed early
+    assert {:ok, branch2} = Bucket.take(b, 1000 + 400)
+    assert {:ok, branch2} = Bucket.take(branch2, 1000 + 400)
+    assert {:ok, branch2} = Bucket.take(branch2, 1000 + 400)
+    assert {:reject, ^branch2} = Bucket.take(branch2, 1000 + 400)
 
-    assert {:ok, _} = Bucket.take(b, 1000 + 670)
+    # Finally on branch 2 we had
+    # * 1 drip at 0
+    # * 2 drips at 400
+    # * 3 drips at 1400
+    #
+    # Which is corect.
+  end
+
+  test "burst control" do
+    b = test_bucket(3, 1000, 0)
+
+    # We consume all our drips at the end of the time period
+    assert {:ok, b} = Bucket.take(b, 997)
+    assert {:ok, b} = Bucket.take(b, 998)
+    assert {:ok, b} = Bucket.take(b, 999)
+
+    # We cannot consume more before 1997
+    assert {:reject, b} = Bucket.take(b, 1000)
+    assert {:reject, b} = Bucket.take(b, 1996)
+
+    # we cannot consume at 1997 because of the slot mechanism. The slot was
+    # closed at 999 when the last allowance was given. But we can consume 3 at
+    # 1999.
+
+    assert {:reject, b} = Bucket.take(b, 1997)
+    assert {:reject, b} = Bucket.take(b, 1998)
+    assert {:ok, b} = Bucket.take(b, 1999)
+    assert {:ok, b} = Bucket.take(b, 1999)
+    assert {:ok, _b} = Bucket.take(b, 1999)
   end
 
   test "consume in loop and max time" do
     # - we will create a bucket that can allow 20 in 100.
-    # - we will take 3000 drips from the bucket
-    # - whenever we encounter an :error (rejection), we warp 10ms in the
-    #   future.
-    # - this should take 15 seconds, so 15,000 ms. We will assert that we were
-    #   able to do so in less than 15,000 ms
+    # - we will take N drips from the bucket
+    # - whenever we encounter an :error (rejection), we warp 10ms in the future.
+    # - For instance with 3000 drips: 3000/20 = 150 periods of 100ms: this
+    #   should take 15 seconds, so 15,000ms.
+    # - We will assert that we were able to do so in less than 15,000ms since we
+    #   can burst at the beginning of the last slot.
 
     # bucket config
     max_allow = 20
@@ -177,13 +210,23 @@ defmodule Kota.BucketTest do
     start_time = 0
 
     # test config
-    iterations = 100
-    warp_time = 10
-    maximum_expected_time = iterations / max_allow * range_ms
-    jitter = 3
+    iterations = 3000
+    warp_time = 5
+
+    total_periods =
+      case rem(iterations, max_allow) do
+        0 -> div(iterations, max_allow)
+        rem -> div(iterations, max_allow) + 1
+      end
+
+    (maximum_expected_time = total_periods * range_ms) |> dbg()
 
     IO.puts(
-      "maximum_expected_time = (#{iterations} / #{max_allow}) * #{range_ms} = #{round(iterations / max_allow)} * #{range_ms} = #{round(maximum_expected_time)}"
+      "total_periods = #{total_periods} (#{iterations} iterations at #{max_allow} per period)"
+    )
+
+    IO.puts(
+      "maximum_expected_time = #{total_periods} * #{range_ms} = #{round(maximum_expected_time)}"
     )
 
     bucket = test_bucket(max_allow, range_ms, start_time)
@@ -192,31 +235,47 @@ defmodule Kota.BucketTest do
     # A function that will increment time until the drip is allowed; returns the
     # new bucket and the new time.
 
-    loop = fn f, bucket, now ->
-      case Bucket.take(bucket, now) do
-        {:reject, bucket} ->
-          new_now = now + warp_time
-          f.(f, bucket, new_now)
+    take_one = fn f, bucket, now ->
+      result = {_, bucket} = Bucket.take(bucket, now)
 
-        {:ok, bucket} ->
-          {bucket, now}
+      IO.puts([
+        now |> Integer.to_string() |> Kernel.<>("ms") |> String.pad_trailing(6),
+        "   count: ",
+        Integer.to_string(bucket.count) |> String.pad_leading(4),
+        "   allow: ",
+        Integer.to_string(bucket.allowance) |> String.pad_leading(3),
+        "   refills: ",
+        inspect(:queue.peek(bucket.refills))
+      ])
+
+      case result do
+        {:reject, bucket} -> f.(f, bucket, now + warp_time)
+        {:ok, bucket} -> {bucket, now}
       end
     end
 
     {b, end_time, times} =
       Enum.reduce(1..iterations, {bucket, 0, []}, fn n, {bucket, now, times} ->
-        {bucket, accepted_now} = loop.(loop, bucket, now)
-        next_now = accepted_now + rem(accepted_now, 3)
+        {bucket, accepted_now} = take_one.(take_one, bucket, now)
+        # Force time advancement to trigger the slot delay
+        next_now = accepted_now + 1
         {bucket, next_now, [accepted_now | times]}
       end)
+
+    # |> tap(fn {_, _, times} ->
+    #   times |> Enum.frequencies() |> Enum.sort() |> IO.inspect()
+    # end)
 
     assert iterations == b.count
 
     # we will generate each sliding window and assert that not too much drops
-    # were made.
-    freqs = times |> Enum.frequencies() |> Map.to_list() |> Enum.sort()
-    # freqs |> IO.inspect(label: "freqs")
+    # were made. All frequencies will be 1 as we +1 the accepted time at each
+    # take, but to support testing with 0 time advancement during dev we still
+    # compute as frequencies.
+    freqs = times |> Enum.frequencies() |> Enum.sort()
 
+    # for each time we took a drip at, we create a window of that time plus all
+    # the following times that fit in the range
     windows =
       for index_start <- 0..(length(freqs) - 1) do
         {_, list} = Enum.split(freqs, index_start)
@@ -228,17 +287,16 @@ defmodule Kota.BucketTest do
           end)
       end
 
-    # windows |> IO.inspect(label: "windows")
+    # For each window we sum the number of takes, and check that it respects the
+    # max_allow constraint.
+    Enum.map(windows, fn window ->
+      sum = Enum.reduce(window, 0, fn {_, n}, acc -> acc + n end)
 
-    sums =
-      Enum.map(windows, fn window ->
-        sum = Enum.reduce(window, 0, fn {_, n}, acc -> acc + n end)
+      assert sum <= max_allow
+    end)
 
-        if sum > max_allow do
-          assert sum <= max_allow
-        end
-      end)
-
+    # This does not work because of the slots delay:
+    IO.puts("toal elapsed time: #{end_time}ms")
     assert end_time < maximum_expected_time
   end
 

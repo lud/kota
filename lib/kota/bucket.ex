@@ -14,7 +14,7 @@ defmodule Kota.Bucket do
     :slot_usage,
 
     # The duration of a slot.
-    :slot_time,
+    :slot_ms,
 
     # The absolute time at which the current slot ends, (exclusive, a call
     # coming at that exact timestamp will belong to the new slot).
@@ -25,9 +25,9 @@ defmodule Kota.Bucket do
     # amount of the current usage.
     :refills,
 
-    # Timestamp of the last used, which will delimit the new time slot and
-    # refill time.
-    :last_use,
+    # Timestamp of the last take or slot rotation, which will delimit the new
+    # time slot and refill time.
+    :last_change,
 
     # The total taken count from that bucket, used for tests.
     :count
@@ -43,35 +43,35 @@ defmodule Kota.Bucket do
     with {:ok, max_allow} <- validate_pos_integer(opts, :max_allow),
          {:ok, range_ms} <- validate_pos_integer(opts, :range_ms),
          {:ok, now} <- validate_non_neg_integer(opts, :start_time),
-         {:ok, slot_time} <- validate_slot_time(opts, range_ms),
-         :ok <- verify_slot_time(range_ms, slot_time) do
+         {:ok, slot_ms} <- validate_slot_ms(opts, range_ms),
+         :ok <- verify_slot_ms(range_ms, slot_ms) do
       bucket = %__MODULE__{
         allowance: max_allow,
         count: 0,
         max_allow: max_allow,
         range_ms: range_ms,
         refills: :queue.new(),
-        slot_end: now + slot_time,
-        slot_time: slot_time,
+        slot_end: now + slot_ms,
+        slot_ms: slot_ms,
         slot_usage: 0,
-        last_use: now
+        last_change: now
       }
 
       {:ok, bucket}
     end
   end
 
-  defp verify_slot_time(range_ms, slot_time) do
-    if slot_time <= range_ms do
+  defp verify_slot_ms(range_ms, slot_ms) do
+    if slot_ms <= range_ms do
       :ok
     else
-      {:error, "slot time #{slot_time} is greater than range #{range_ms}"}
+      {:error, "slot time #{slot_ms} is greater than range #{range_ms}"}
     end
   end
 
   def take(%__MODULE__{slot_end: slend} = bucket, now) when now >= slend do
     bucket
-    |> rotate(now)
+    |> close_slot(now)
     |> refill(now)
     |> take(now)
   end
@@ -83,48 +83,49 @@ defmodule Kota.Bucket do
       | allowance: al - 1,
         slot_usage: used + 1,
         count: c + 1,
-        last_use: now
+        last_change: now
     }
 
-    # if the new allowance will be zero we can immediately rotate
+    # if the new allowance will be zero we can immediately close_slot
 
     case al do
-      1 -> {:ok, rotate(bucket, now)}
+      1 -> {:ok, close_slot(bucket, now)}
       _ -> {:ok, bucket}
     end
   end
 
   def take(bucket, _now) do
-    # since we may have called rotate(), we still return the updated bucket.
+    # on failure, since we may have called close_slot(), we still return the updated
+    # bucket.
     {:reject, bucket}
   end
 
-  defp rotate(bucket, now) do
-    %__MODULE__{last_use: last, range_ms: range_ms} = bucket
+  defp close_slot(bucket, now) do
+    %__MODULE__{last_change: last, range_ms: range_ms} = bucket
 
     if now > last + range_ms do
       reset(bucket, now)
     else
-      do_rotate(bucket)
+      do_close_slot(bucket)
     end
   end
 
-  defp do_rotate(bucket) do
+  defp do_close_slot(bucket) do
     %__MODULE__{
-      last_use: last,
+      last_change: last,
       range_ms: range_ms,
-      slot_time: sltime,
-      slot_end: old_slend,
+      slot_ms: slot_ms,
+      slot_end: slot_end,
       refills: q,
       slot_usage: usage
     } = bucket
 
-    slend = last + sltime
+    new_slot_end = last + slot_ms
     refill_time = last + range_ms
 
     # in order to force the data to advance in time we force the last usage
     # date to the end of the slot that just finished
-    last = old_slend
+    last = slot_end
 
     q =
       case usage do
@@ -132,19 +133,25 @@ defmodule Kota.Bucket do
         _ -> :queue.in({refill_time, usage}, q)
       end
 
-    %__MODULE__{bucket | refills: q, slot_end: slend, slot_usage: 0, last_use: last}
+    %__MODULE__{
+      bucket
+      | refills: q,
+        slot_end: new_slot_end,
+        slot_usage: 0,
+        last_change: last
+    }
   end
 
   defp reset(bucket, now) do
-    %__MODULE__{max_allow: max_allow, slot_time: slot_time} = bucket
+    %__MODULE__{max_allow: max_allow, slot_ms: slot_ms} = bucket
 
     %__MODULE__{
       bucket
       | allowance: max_allow,
         refills: :queue.new(),
-        slot_end: now + slot_time,
+        slot_end: now + slot_ms,
         slot_usage: 0,
-        last_use: now
+        last_change: now
     }
   end
 
@@ -192,10 +199,10 @@ defmodule Kota.Bucket do
     end
   end
 
-  defp validate_slot_time(opts, range_ms) do
-    case opts[:slot_time] do
+  defp validate_slot_ms(opts, range_ms) do
+    case opts[:slot_ms] |> dbg() do
       :one_tenth -> {:ok, div(range_ms, 10)}
-      _ -> validate_pos_integer(opts, :slot_time)
+      _ -> validate_pos_integer(opts, :slot_ms)
     end
   end
 end
