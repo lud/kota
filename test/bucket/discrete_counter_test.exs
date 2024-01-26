@@ -1,4 +1,5 @@
 defmodule Kota.Bucket.DiscreteCounterTest do
+  import Kota.Case, only: [format_time: 1]
   use ExUnit.Case, async: false
 
   @mod Kota.Bucket.DiscreteCounter
@@ -267,28 +268,10 @@ defmodule Kota.Bucket.DiscreteCounterTest do
     end)
 
     print_expectations.()
-    IO.puts("toal elapsed time: #{format_time(end_time)}")
+    IO.puts("total elapsed time: #{format_time(end_time)}")
 
     assert end_time < maximum_expected_time
   end
-
-  defp format_time(ms) do
-    format_time(ms, :ms)
-  end
-
-  defp format_time(ms, :ms) when ms >= 1000 do
-    format_time(ms / 1000, :seconds)
-  end
-
-  defp format_time(s, :seconds) when s >= 60 do
-    format_time(s / 60, :minutes)
-  end
-
-  defp format_time(n, unit) when is_integer(n),
-    do: [Integer.to_string(n), " ", Atom.to_string(unit)]
-
-  defp format_time(n, unit) when is_float(n),
-    do: [:io_lib.format(~c"~.2f", [n]), " ", Atom.to_string(unit)]
 
   test "large gaps in time will simply reset the stage" do
     b = test_bucket(3, 1000)

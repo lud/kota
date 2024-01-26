@@ -3,9 +3,6 @@ defmodule Kota do
   alias :queue, as: Q
   use GenServer
 
-  # @mod Kota.Bucket.SlidingWindow
-  @mod Kota.Bucket.DiscreteCounter
-
   def start_link(opts) do
     {gen_opts, opts} = split_gen_opts(opts)
     GenServer.start_link(__MODULE__, opts, gen_opts)
@@ -24,81 +21,87 @@ defmodule Kota do
     [max_allow: max_allow, range_ms: range_ms]
   end
 
-  def stop(bucket) do
-    GenServer.stop(bucket)
+  def stop(server) do
+    GenServer.stop(server)
   end
 
-  def await(bucket, timeout \\ :infinity)
+  def await(server, timeout \\ :infinity)
 
-  def await(bucket, :infinity) do
-    GenServer.call(bucket, {:await, make_ref()}, :infinity)
+  def await(server, :infinity) do
+    GenServer.call(server, {:await, make_ref()}, :infinity)
   end
 
-  def await(bucket, timeout) do
+  def await(server, timeout) do
     ref = make_ref()
 
     try do
-      GenServer.call(bucket, {:await, ref}, timeout)
+      GenServer.call(server, {:await, ref}, timeout)
     catch
       :exit, {:timeout, {GenServer, :call, _}} = e ->
-        cancel(bucket, ref)
+        cancel(server, ref)
         exit(e)
     end
   end
 
-  def cancel(bucket, ref) when is_reference(ref) do
-    GenServer.cast(bucket, {:cancel, ref})
+  def cancel(server, ref) when is_reference(ref) do
+    GenServer.cast(server, {:cancel, ref})
+  end
+
+  def total_count(server) do
+    GenServer.call(server, :get_count)
   end
 
   defmodule S do
     @moduledoc false
-    @enforce_keys [:bucket, :clients]
+    @enforce_keys [:bmod, :bucket, :clients]
     defstruct @enforce_keys
   end
 
   @impl GenServer
   def init(opts) do
+    {bmod, opts} = Keyword.pop!(opts, :bmod)
+
     opts =
       opts
       |> Keyword.put_new(:start_time, now_ms())
       |> Keyword.put_new(:slot_ms, :one_tenth)
 
-    {:ok, %S{bucket: @mod.new(opts), clients: Q.new()}}
+    {:ok, %S{bmod: bmod, bucket: bmod.new(opts), clients: Q.new()}}
   end
 
   @impl GenServer
-  def handle_call({:await, ref}, from, %S{bucket: bucket, clients: q} = state) do
-    now = now_ms()
+  def handle_call({:await, ref}, from, state) do
+    %S{clients: q} = state
+    state = %S{state | clients: Q.in({from, ref}, q)}
+    {:noreply, state, {:continue, :run_queue}}
+  end
 
-    case @mod.take(bucket, now) do
-      {:ok, bucket} ->
-        state = %S{state | bucket: bucket}
-        {:reply, :ok, state, :infinity}
-
-      {:reject, bucket} ->
-        state = %S{state | bucket: bucket, clients: Q.in({from, ref}, q)}
-
-        {:noreply, state, next_timeout(state)}
-    end
+  def handle_call(:get_count, _from, state) do
+    {:reply, state.bucket.count, state, {:continue, :run_queue}}
   end
 
   @impl GenServer
   def handle_info(:timeout, state) do
-    state = run_queue(state)
+    {:noreply, state, {:continue, :run_queue}}
+  end
 
+  @impl GenServer
+  def handle_continue(:run_queue, state) do
+    state = run_queue(state)
     {:noreply, state, next_timeout(state)}
   end
 
-  defp run_queue(%S{clients: q, bucket: bucket} = state) do
+  defp run_queue(state) do
+    %S{clients: q, bucket: bucket} = state
+
     case Q.out(q) do
       {:empty, _} ->
         state
 
       {{:value, {from, _} = _client}, new_q} ->
-        case @mod.take(bucket, now_ms()) do
+        case state.bmod.take(bucket, now_ms()) do
           {:ok, bucket} ->
             GenServer.reply(from, :ok)
-
             run_queue(%S{state | bucket: bucket, clients: new_q})
 
           {:reject, bucket} ->
@@ -121,7 +124,7 @@ defmodule Kota do
         clients
       )
 
-    {:noreply, %S{state | clients: clients}, next_timeout(state)}
+    {:noreply, %S{state | clients: clients}, {:continue, :run_queue}}
   end
 
   def now_ms do

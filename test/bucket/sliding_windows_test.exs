@@ -1,4 +1,5 @@
 defmodule Kota.Bucket.SlidingWindowTest do
+  import Kota.Case, only: [format_time: 1]
   use ExUnit.Case, async: false
 
   @mod Kota.Bucket.SlidingWindow
@@ -223,20 +224,20 @@ defmodule Kota.Bucket.SlidingWindowTest do
     # new bucket and the new time.
 
     take_one = fn f, bucket, now ->
-      result = {_, bucket} = @mod.take(bucket, now)
+      result = {_, _bucket} = @mod.take(bucket, now)
 
-      IO.puts([
-        now |> Integer.to_string() |> String.pad_leading(6),
-        " ms",
-        "   count: ",
-        Integer.to_string(bucket.count) |> String.pad_leading(4),
-        "   allow: ",
-        Integer.to_string(bucket.allowance) |> String.pad_leading(3),
-        "   usage: ",
-        Integer.to_string(bucket.slot_usage) |> String.pad_leading(3),
-        "   refills: ",
-        inspect(:queue.to_list(bucket.refills))
-      ])
+      # IO.puts([
+      #   now |> Integer.to_string() |> String.pad_leading(6),
+      #   " ms",
+      #   "   count: ",
+      #   Integer.to_string(bucket.count) |> String.pad_leading(4),
+      #   "   allow: ",
+      #   Integer.to_string(bucket.allowance) |> String.pad_leading(3),
+      #   "   usage: ",
+      #   Integer.to_string(bucket.slot_usage) |> String.pad_leading(3),
+      #   "   refills: ",
+      #   inspect(:queue.to_list(bucket.refills))
+      # ])
 
       case result do
         {:reject, bucket} -> f.(f, bucket, now + warp_time)
@@ -281,28 +282,10 @@ defmodule Kota.Bucket.SlidingWindowTest do
     end)
 
     print_expectations.()
-    IO.puts("toal elapsed time: #{format_time(end_time)}")
+    IO.puts("total elapsed time: #{format_time(end_time)}")
     # This does not work because of the slots delay:
     # assert end_time < maximum_expected_time
   end
-
-  defp format_time(ms) do
-    format_time(ms, :ms)
-  end
-
-  defp format_time(ms, :ms) when ms >= 1000 do
-    format_time(ms / 1000, :seconds)
-  end
-
-  defp format_time(s, :seconds) when s >= 60 do
-    format_time(s / 60, :minutes)
-  end
-
-  defp format_time(n, unit) when is_integer(n),
-    do: [Integer.to_string(n), " ", Atom.to_string(unit)]
-
-  defp format_time(n, unit) when is_float(n),
-    do: [:io_lib.format(~c"~.2f", [n]), " ", Atom.to_string(unit)]
 
   test "large gaps in time will simply reset the stage" do
     b = test_bucket(3, 1000, 0)
