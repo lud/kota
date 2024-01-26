@@ -2,7 +2,9 @@ defmodule Kota do
   @moduledoc false
   alias :queue, as: Q
   use GenServer
-  alias Kota.Bucket
+
+  # @mod Kota.Bucket.SlidingWindow
+  @mod Kota.Bucket.DiscreteCounter
 
   def start_link(opts) do
     {gen_opts, opts} = split_gen_opts(opts)
@@ -61,17 +63,14 @@ defmodule Kota do
       |> Keyword.put_new(:start_time, now_ms())
       |> Keyword.put_new(:slot_ms, :one_tenth)
 
-    case Bucket.new_ok(opts) do
-      {:ok, bucket} -> {:ok, %S{bucket: bucket, clients: Q.new()}}
-      {:error, reason} -> {:stop, reason}
-    end
+    {:ok, %S{bucket: @mod.new(opts), clients: Q.new()}}
   end
 
   @impl GenServer
   def handle_call({:await, ref}, from, %S{bucket: bucket, clients: q} = state) do
     now = now_ms()
 
-    case Bucket.take(bucket, now) do
+    case @mod.take(bucket, now) do
       {:ok, bucket} ->
         state = %S{state | bucket: bucket}
         {:reply, :ok, state, :infinity}
@@ -79,14 +78,15 @@ defmodule Kota do
       {:reject, bucket} ->
         state = %S{state | bucket: bucket, clients: Q.in({from, ref}, q)}
 
-        {:noreply, state, next_timeout(state, now)}
+        {:noreply, state, next_timeout(state)}
     end
   end
 
   @impl GenServer
   def handle_info(:timeout, state) do
     state = run_queue(state)
-    {:noreply, state, next_timeout(state, now_ms())}
+
+    {:noreply, state, next_timeout(state)}
   end
 
   defp run_queue(%S{clients: q, bucket: bucket} = state) do
@@ -95,9 +95,10 @@ defmodule Kota do
         state
 
       {{:value, {from, _} = _client}, new_q} ->
-        case Bucket.take(bucket, now_ms()) do
+        case @mod.take(bucket, now_ms()) do
           {:ok, bucket} ->
             GenServer.reply(from, :ok)
+
             run_queue(%S{state | bucket: bucket, clients: new_q})
 
           {:reject, bucket} ->
@@ -111,22 +112,25 @@ defmodule Kota do
     clients =
       Q.filter(
         fn
-          {_from, ^ref} -> false
-          _ -> true
+          {_from, ^ref} ->
+            false
+
+          _ ->
+            true
         end,
         clients
       )
 
-    {:noreply, %S{state | clients: clients}}
+    {:noreply, %S{state | clients: clients}, next_timeout(state)}
   end
 
   def now_ms do
     :erlang.system_time(:millisecond)
   end
 
-  defp next_timeout(%{bucket: %Bucket{allowance: al} = bucket}, now) do
+  defp next_timeout(%{bucket: %mod{allowance: al} = bucket}) do
     if al == 0 do
-      max(0, Bucket.next_refill!(bucket) - now)
+      max(0, mod.next_refill!(bucket) - now_ms())
     else
       :infinity
     end
