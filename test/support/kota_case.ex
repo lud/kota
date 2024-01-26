@@ -148,10 +148,10 @@ defmodule Kota.Case do
         # launch many processes competing for the same bucket expect that taking
         # 10k drips at 1000/second takes less than 10 seconds And expect than
         # taking 1 more lasts at least 10 seconds
-        n_procs = 10000
+        n_procs = 10_000
         n_drips = 100
         range_ms = 1000
-        await_drips = 10000
+        await_drips = 10_000
         t1 = :erlang.monotonic_time(:millisecond)
 
         {:ok, kota} = Kota.start_link(max_allow: 1000, range_ms: range_ms, bmod: ctx.bmod)
@@ -175,11 +175,11 @@ defmodule Kota.Case do
 
         recursive(fn next ->
           case Kota.total_count(kota) do
-            n when n >= 10001 ->
+            n when n >= 10_001 ->
               send(self(), {:time_at_more, :erlang.monotonic_time(:millisecond)})
               :ok
 
-            10000 ->
+            10_000 ->
               send(self(), {:time_at_10k, :erlang.monotonic_time(:millisecond)})
               Process.sleep(10)
               next.()
