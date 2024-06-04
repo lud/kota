@@ -1,5 +1,23 @@
 defmodule Kota do
-  @moduledoc false
+  @moduledoc """
+  Kota is a simple rate limiter.
+
+  ### Basic example
+
+      {:ok, kota} = Kota.start_link(max_allow: 10, range_ms: 1000, adapter: Kota.Bucket.DiscreteCounter)
+      :ok = Kota.await(kota)
+
+
+  ### Adapters
+
+  * `Kota.Bucket.DiscreteCounter` – This adapter just counts every call at the
+    expense of memory usage.
+  * `Kota.Bucket.SlidingWindow` – This adapter uses a sliding window technique
+    to save on memory and processing but will result in a lower rate if used
+    constantly without time to recover time lost by the window timespan.
+
+  """
+
   alias :queue, as: Q
   use GenServer
 
@@ -53,20 +71,20 @@ defmodule Kota do
 
   defmodule S do
     @moduledoc false
-    @enforce_keys [:bmod, :bucket, :clients]
+    @enforce_keys [:adapter, :bucket, :clients]
     defstruct @enforce_keys
   end
 
   @impl GenServer
   def init(opts) do
-    {bmod, opts} = Keyword.pop!(opts, :bmod)
+    {adapter, opts} = Keyword.pop!(opts, :adapter)
 
     opts =
       opts
       |> Keyword.put_new(:start_time, now_ms())
       |> Keyword.put_new(:slot_ms, :one_tenth)
 
-    {:ok, %S{bmod: bmod, bucket: bmod.new(opts), clients: Q.new()}}
+    {:ok, %S{adapter: adapter, bucket: adapter.new(opts), clients: Q.new()}}
   end
 
   @impl GenServer
@@ -99,7 +117,7 @@ defmodule Kota do
         state
 
       {{:value, {from, _} = _client}, new_q} ->
-        case state.bmod.take(bucket, now_ms()) do
+        case state.adapter.take(bucket, now_ms()) do
           {:ok, bucket} ->
             GenServer.reply(from, :ok)
             run_queue(%S{state | bucket: bucket, clients: new_q})

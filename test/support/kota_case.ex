@@ -7,10 +7,10 @@ defmodule Kota.Case do
   use ExUnit.CaseTemplate
 
   using use_ctx do
-    bmod = Keyword.fetch!(use_ctx, :bmod)
+    adapter = Keyword.fetch!(use_ctx, :adapter)
     log = Keyword.fetch!(use_ctx, :log)
 
-    quote location: :keep, bind_quoted: [bmod: bmod, log: log] do
+    quote location: :keep, bind_quoted: [adapter: adapter, log: log] do
       import Kota.Case
 
       setup ctx do
@@ -21,11 +21,11 @@ defmodule Kota.Case do
             _ -> fn _ -> :ok end
           end
 
-        Map.merge(ctx, %{log: log, bmod: unquote(bmod)})
+        Map.merge(ctx, %{log: log, adapter: unquote(adapter)})
       end
 
       test "basic", ctx do
-        {:ok, pid} = Kota.start_link(max_allow: 10, range_ms: 1000, bmod: ctx.bmod)
+        {:ok, pid} = Kota.start_link(max_allow: 10, range_ms: 1000, adapter: ctx.adapter)
         t1 = :erlang.monotonic_time(:millisecond)
 
         tasks =
@@ -48,7 +48,7 @@ defmodule Kota.Case do
           max_allow: 1,
           range_ms: 1_000,
           name: __MODULE__.DripSlow,
-          bmod: ctx.bmod
+          adapter: ctx.adapter
         )
 
         # The first call should be immediate and the second should wait
@@ -70,7 +70,12 @@ defmodule Kota.Case do
 
       test "drip timeout", ctx do
         {:ok, pid} =
-          Kota.start_link(max_allow: 10, range_ms: 1000, slot_ms: 10, bmod: ctx.bmod)
+          Kota.start_link(
+            max_allow: 10,
+            range_ms: 1000,
+            slot_ms: 10,
+            adapter: ctx.adapter
+          )
 
         # Run different batches :
         # - batch 1 (20 tasks) with a timeout of 500 will have 10 tasks ok and 10
@@ -97,7 +102,7 @@ defmodule Kota.Case do
 
       test "100 drips", ctx do
         name = __MODULE__.Drip100
-        Kota.start_link(max_allow: 10, range_ms: 100, name: name, bmod: ctx.bmod)
+        Kota.start_link(max_allow: 10, range_ms: 100, name: name, adapter: ctx.adapter)
 
         t1 = :erlang.monotonic_time(:millisecond)
 
@@ -119,7 +124,7 @@ defmodule Kota.Case do
         # right after. The second group must be delayed. To verify that, there
         # should be one second difference between the 1st drip and the 4th.
 
-        {:ok, drip} = Kota.start_link(max_allow: 3, range_ms: 1000, bmod: ctx.bmod)
+        {:ok, drip} = Kota.start_link(max_allow: 3, range_ms: 1000, adapter: ctx.adapter)
         sleep_log(700, ctx)
 
         f = fn ->
@@ -135,7 +140,7 @@ defmodule Kota.Case do
 
       test "Under supervision", ctx do
         children = [
-          {Kota, max_allow: 10, range_ms: 1100, bmod: ctx.bmod}
+          {Kota, max_allow: 10, range_ms: 1100, adapter: ctx.adapter}
         ]
 
         # See https://hexdocs.pm/elixir/Supervisor.html
@@ -154,7 +159,8 @@ defmodule Kota.Case do
         await_drips = 10_000
         t1 = :erlang.monotonic_time(:millisecond)
 
-        {:ok, kota} = Kota.start_link(max_allow: 1000, range_ms: range_ms, bmod: ctx.bmod)
+        {:ok, kota} =
+          Kota.start_link(max_allow: 1000, range_ms: range_ms, adapter: ctx.adapter)
 
         taker =
           recursive(fn
@@ -185,7 +191,7 @@ defmodule Kota.Case do
               next.()
 
             n ->
-              ctx.log.("count #{ctx.bmod} #{n}/#{await_drips}")
+              ctx.log.("count #{ctx.adapter} #{n}/#{await_drips}")
               Process.sleep(100)
               next.()
           end
@@ -196,13 +202,13 @@ defmodule Kota.Case do
         {_, tmore} = assert_received {:time_at_more, _tmore}
 
         ctx.log.(
-          "stress test time for 10k #{inspect(ctx.bmod)}: #{format_time(t10k - t1)}"
+          "stress test time for 10k #{inspect(ctx.adapter)}: #{format_time(t10k - t1)}"
         )
 
         assert t10k - t1 < 10_000
 
         ctx.log.(
-          "stress test time for 10k+1+ #{inspect(ctx.bmod)}: #{format_time(tmore - t1)}"
+          "stress test time for 10k+1+ #{inspect(ctx.adapter)}: #{format_time(tmore - t1)}"
         )
 
         assert tmore - t1 >= 10_000

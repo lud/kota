@@ -3,7 +3,7 @@ defmodule Kota.With.SlidingWindowTest do
 
   use Kota.Case,
     async: true,
-    bmod: Kota.Bucket.SlidingWindow,
+    adapter: Kota.Bucket.SlidingWindow,
     log: false
 end
 
@@ -12,6 +12,6 @@ defmodule Kota.With.DiscreteCounterTest do
 
   use Kota.Case,
     async: true,
-    bmod: Kota.Bucket.DiscreteCounter,
+    adapter: Kota.Bucket.DiscreteCounter,
     log: false
 end
