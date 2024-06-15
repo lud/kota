@@ -2,12 +2,13 @@
 
 A simple and correct rate limiter for Elixir
 
-## Installation
 
+## Installation
 
 ```elixir
 {:kota, "~> 0.1.0"},
 ```
+
 
 ## Documentation
 
