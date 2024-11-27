@@ -1,10 +1,13 @@
+# System.put_env("MIX_INSTALL_FORCE", "true")
+
 Mix.install(
   [
     {:rate_limiter, ">= 0.0.0"},
-    {:ark, ">= 0.0.0"},
     {:ex_rated, ">= 0.0.0"},
-    {:hammer, "~> 6.1"}
+    {:hammer, "~> 6.1"},
+    {:kota, ">= 0.0.0"}
   ],
+  consolidate_protocols: true,
   config: [
     hammer: [
       backend:
@@ -40,17 +43,18 @@ defmodule Checker do
   # Accepts a function that tries to increment the counter to more than
   # @max_in_time in less than @time_interval.
   def check(name, check_rate) do
+    indent = "   "
     IO.puts("== Executing #{name}")
 
     {:span, count, time} = check_rate.()
 
     message = "Counted #{count} in #{time}ms"
-    IO.puts("Finished #{name}, ")
+    IO.puts(indent <> "Finished #{name}")
 
     if count > @max_in_time and time <= @time_interval do
-      IO.puts([IO.ANSI.red(), "KO    ", message, IO.ANSI.reset()])
+      IO.puts([IO.ANSI.red(), indent, "KO    ", message, IO.ANSI.reset()])
     else
-      IO.puts([IO.ANSI.green(), "OK    ", message, IO.ANSI.reset()])
+      IO.puts([IO.ANSI.green(), indent, "OK    ", message, IO.ANSI.reset()])
     end
   end
 
@@ -111,27 +115,28 @@ defmodule Checker do
     end)
   end
 
-  # todo use Kota from hexpm
-
-  def demo_ark_drip do
-    alias Ark.Drip
-
-    {:ok, bucket} = Drip.start_link(max_drops: @max_in_time, range_ms: @time_interval)
+  def demo_kota(bucket_adapter) do
+    {:ok, bucket} =
+      Kota.start_link(
+        adapter: bucket_adapter,
+        max_allow: @max_in_time,
+        range_ms: @time_interval
+      )
 
     # Basic burst should be fine
-    :ok = Drip.await(bucket)
+    :ok = Kota.await(bucket)
     Process.sleep(900)
 
     count_span(199, fn counter ->
       for _ <- 1..99 do
-        :ok = Drip.await(bucket)
+        :ok = Kota.await(bucket)
         :ok = Counter.increment(counter)
       end
 
       Process.sleep(101)
 
       for _ <- 1..100 do
-        :ok = Drip.await(bucket)
+        :ok = Kota.await(bucket)
         :ok = Counter.increment(counter)
       end
     end)
@@ -167,4 +172,11 @@ end
 Checker.check("RateLimiter", &Checker.demo_rate_limiter/0)
 Checker.check("ExRated", &Checker.demo_ex_rated/0)
 Checker.check("Hammer", &Checker.demo_hammer/0)
-Checker.check("Ark.Drip", &Checker.demo_ark_drip/0)
+
+Checker.check("Kota.Bucket.DiscreteCounter", fn ->
+  Checker.demo_kota(Kota.Bucket.DiscreteCounter)
+end)
+
+Checker.check("Kota.Bucket.SlidingWindow", fn ->
+  Checker.demo_kota(Kota.Bucket.SlidingWindow)
+end)

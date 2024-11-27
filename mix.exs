@@ -31,8 +31,8 @@ defmodule Kota.MixProject do
     [
       {:credo, "~> 1.7", only: [:dev, :test], runtime: false},
       {:dialyxir, "~> 1.4", only: [:dev, :test], runtime: false},
-      {:ex_check, "~> 0.15.0", only: [:dev, :test], runtime: false},
-      {:ex_doc, "~> 0.34.0", only: [:dev, :test], runtime: false}
+      {:ex_check, "~> 0.16.0", only: [:dev, :test], runtime: false},
+      {:ex_doc, ">= 0.0.0", only: [:dev, :test], runtime: false}
     ]
   end
 
