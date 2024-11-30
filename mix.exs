@@ -11,10 +11,10 @@ defmodule Kota.MixProject do
       elixir: "~> 1.15",
       start_permanent: Mix.env() == :prod,
       deps: deps(),
-      dialyzer: [flags: ["-Wno_improper_lists"]],
       elixirc_paths: elixirc_paths(Mix.env()),
       description: "A GenServer based rate limiter",
       package: package(),
+      dialyzer: dialyzer(),
       source_url: @repo
     ]
   end
@@ -41,5 +41,13 @@ defmodule Kota.MixProject do
 
   defp package do
     [name: "kota", licenses: ["MIT"], links: %{"Github" => @repo}]
+  end
+
+  defp dialyzer do
+    [
+      flags: [:unmatched_returns, :error_handling, :unknown, :extra_return],
+      list_unused_filters: true,
+      plt_local_path: "_build/plts"
+    ]
   end
 end
