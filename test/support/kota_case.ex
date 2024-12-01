@@ -16,8 +16,7 @@ defmodule Kota.Case do
       setup ctx do
         log =
           case unquote(log) do
-            # use "apply" so we can `sed 's/IO.puts/ctx.log./'`
-            true -> fn msg -> apply(IO, :puts, [msg]) end
+            true -> &IO.puts/1
             _ -> fn _ -> :ok end
           end
 
