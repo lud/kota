@@ -3,6 +3,7 @@ defmodule Kota.MixProject do
 
   @version "0.1.1"
   @repo "https://github.com/lud/kota"
+  @changelog "#{@repo}/blob/main/CHANGELOG.md"
 
   def project do
     [
@@ -40,7 +41,11 @@ defmodule Kota.MixProject do
   defp elixirc_paths(_), do: ["lib"]
 
   defp package do
-    [name: "kota", licenses: ["MIT"], links: %{"Github" => @repo}]
+    [
+      name: "kota",
+      licenses: ["MIT"],
+      links: %{"Github" => @repo, "Changelog" => @changelog}
+    ]
   end
 
   defp dialyzer do
