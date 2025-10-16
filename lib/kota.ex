@@ -90,7 +90,7 @@ defmodule Kota do
   @impl GenServer
   def handle_call({:await, ref}, from, state) do
     %S{clients: q} = state
-    state = %S{state | clients: Q.in({from, ref}, q)}
+    state = %{state | clients: Q.in({from, ref}, q)}
     {:noreply, state, {:continue, :run_queue}}
   end
 
@@ -120,10 +120,10 @@ defmodule Kota do
         case state.adapter.take(bucket, now_ms()) do
           {:ok, bucket} ->
             GenServer.reply(from, :ok)
-            run_queue(%S{state | bucket: bucket, clients: new_q})
+            run_queue(%{state | bucket: bucket, clients: new_q})
 
           {:reject, bucket} ->
-            %S{state | bucket: bucket}
+            %{state | bucket: bucket}
         end
     end
   end
@@ -142,7 +142,7 @@ defmodule Kota do
         clients
       )
 
-    {:noreply, %S{state | clients: clients}, {:continue, :run_queue}}
+    {:noreply, %{state | clients: clients}, {:continue, :run_queue}}
   end
 
   def now_ms do

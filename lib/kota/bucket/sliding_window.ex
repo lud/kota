@@ -140,7 +140,7 @@ defmodule Kota.Bucket.SlidingWindow do
         _ -> :queue.in({refill_time, usage}, q)
       end
 
-    %__MODULE__{
+    %{
       bucket
       | refills: q,
         slot_end: new_slot_end,
@@ -152,7 +152,7 @@ defmodule Kota.Bucket.SlidingWindow do
   defp reset(bucket, now) do
     %__MODULE__{max_allow: max_allow, slot_ms: slot_ms} = bucket
 
-    %__MODULE__{
+    %{
       bucket
       | allowance: max_allow,
         refills: :queue.new(),
@@ -167,7 +167,7 @@ defmodule Kota.Bucket.SlidingWindow do
 
     case :queue.peek(q) do
       {:value, {refill_time, amount}} when refill_time <= now ->
-        refill(%__MODULE__{bucket | allowance: al + amount, refills: :queue.drop(q)}, now)
+        refill(%{bucket | allowance: al + amount, refills: :queue.drop(q)}, now)
 
       _ ->
         bucket
