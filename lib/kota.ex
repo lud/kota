@@ -35,10 +35,6 @@ defmodule Kota do
     Keyword.split(opts, [:debug, :name, :timeout, :spawn_opt, :hibernate_after])
   end
 
-  defp split_gen_opts({max_allow, range_ms}) do
-    [max_allow: max_allow, range_ms: range_ms]
-  end
-
   def stop(server) do
     GenServer.stop(server)
   end
