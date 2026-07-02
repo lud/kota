@@ -1,3 +1,6 @@
+_mix_deps:
+  mix deps.get
+
 test:
   mix test
 
@@ -5,7 +8,7 @@ _git_status:
   git status
 
 format:
-  mix format
+  mix format --migrate
 
 credo:
   mix credo --strict --all
@@ -13,4 +16,10 @@ credo:
 dialyzer:
   mix dialyzer
 
-check: format test credo dialyzer _git_status
+readmix:
+  mix rdmx.update README.md
+
+_libdev_check:
+  mix libdev.check
+
+check: _mix_deps format readmix _libdev_check _git_status
