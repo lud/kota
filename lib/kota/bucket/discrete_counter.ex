@@ -1,6 +1,22 @@
 defmodule Kota.Bucket.DiscreteCounter do
   alias Kota.Bucket
-  @moduledoc false
+
+  @moduledoc """
+  A bucket adapter that gives an exact account of the taken allowances.
+
+  Every taken allowance is recorded with its own refill time, so an allowance
+  becomes available again exactly `:range_ms` milliseconds after it was taken.
+  This exactness comes at the expense of memory usage: the bucket keeps one
+  entry per taken allowance until its refill time is reached.
+
+  Select this adapter with the `:adapter` option of `Kota.start_link/1`:
+
+      Kota.start_link(
+        max_allow: 10,
+        range_ms: 1000,
+        adapter: Kota.Bucket.DiscreteCounter
+      )
+  """
   @enforce_keys [
     # Duration within which `max_allow` allowances will be given.
     :range_ms,
@@ -23,6 +39,12 @@ defmodule Kota.Bucket.DiscreteCounter do
 
   defstruct @enforce_keys
 
+  @doc """
+  Builds a new bucket from the given options.
+
+  Requires the `:max_allow` and `:range_ms` options, both positive integers.
+  Raises an `ArgumentError` when an option is missing or invalid.
+  """
   def new(opts) do
     with {:ok, max_allow} <- Bucket.validate_pos_integer(opts, :max_allow),
          {:ok, range_ms} <- Bucket.validate_pos_integer(opts, :range_ms) do
@@ -41,6 +63,13 @@ defmodule Kota.Bucket.DiscreteCounter do
     end
   end
 
+  @doc """
+  Attempts to take one allowance from the bucket at the given time.
+
+  Returns `{:ok, bucket}` when an allowance is available, or `{:reject, bucket}`
+  when the bucket is exhausted for the current time. The `now` argument is the
+  current time in milliseconds, as given by `Kota.now_ms/0`.
+  """
   def take(%{allowance: 0} = bucket, now) do
     bucket
     |> refill(now)
@@ -51,6 +80,7 @@ defmodule Kota.Bucket.DiscreteCounter do
     do_take(bucket, now)
   end
 
+  @doc false
   def do_take(%{allowance: 0} = bucket, _now) do
     {:reject, bucket}
   end
@@ -101,6 +131,12 @@ defmodule Kota.Bucket.DiscreteCounter do
     {q_in, q_out, add}
   end
 
+  @doc """
+  Returns the time at which the next allowance will be refilled, in
+  milliseconds.
+
+  Raises when no refill is pending.
+  """
   def next_refill!(%{q_in: _, q_out: [h | _]}), do: next_refill(h)
   def next_refill!(%{q_in: [_ | _] = q_in, q_out: []}), do: next_refill(:lists.last(q_in))
 

@@ -1,6 +1,29 @@
 defmodule Kota.Bucket.SlidingWindow do
   alias Kota.Bucket
-  @moduledoc false
+
+  @moduledoc """
+  A bucket adapter that accounts for taken allowances in time slots.
+
+  Taken allowances are grouped into slots of `:slot_ms` milliseconds, and each
+  slot's usage is refilled as a whole, `:range_ms` milliseconds after the slot
+  activity started. Grouping keeps memory usage and processing low compared to
+  `Kota.Bucket.DiscreteCounter`: the bucket tracks one refill per slot instead
+  of one per taken allowance.
+
+  Because a whole slot is refilled at once, allowances taken during a slot are
+  refilled as if they had been taken at the end of it. Refills happen later
+  than with an exact per-allowance account, so under constant load this results
+  in a slightly lower effective rate than the configured maximum.
+
+  Select this adapter with the `:adapter` option of `Kota.start_link/1`:
+
+      Kota.start_link(
+        max_allow: 100,
+        range_ms: 1000,
+        slot_ms: 100,
+        adapter: Kota.Bucket.SlidingWindow
+      )
+  """
   @enforce_keys [
     # Duration within which `max_allow` allowances will be given.
     :range_ms,
@@ -37,6 +60,14 @@ defmodule Kota.Bucket.SlidingWindow do
 
   defstruct @enforce_keys
 
+  @doc """
+  Builds a new bucket from the given options.
+
+  Requires the `:max_allow`, `:range_ms` and `:start_time` options. The
+  `:slot_ms` option is a positive integer of milliseconds, at most equal to
+  `:range_ms`, or `:one_tenth` to use a tenth of `:range_ms`. Raises an
+  `ArgumentError` when an option is missing or invalid.
+  """
   def new(opts) do
     with {:ok, max_allow} <- Bucket.validate_pos_integer(opts, :max_allow),
          {:ok, range_ms} <- Bucket.validate_pos_integer(opts, :range_ms),
@@ -76,6 +107,13 @@ defmodule Kota.Bucket.SlidingWindow do
     end
   end
 
+  @doc """
+  Attempts to take one allowance from the bucket at the given time.
+
+  Returns `{:ok, bucket}` when an allowance is available, or `{:reject, bucket}`
+  when the bucket is exhausted for the current time. The `now` argument is the
+  current time in milliseconds, as given by `Kota.now_ms/0`.
+  """
   def take(%__MODULE__{slot_end: slend} = bucket, now) when now >= slend do
     bucket
     |> close_slot(now)
@@ -174,6 +212,11 @@ defmodule Kota.Bucket.SlidingWindow do
     end
   end
 
+  @doc """
+  Returns the time at which the next slot will be refilled, in milliseconds.
+
+  Raises when no refill is pending.
+  """
   def next_refill!(%__MODULE__{refills: q}) do
     {:value, {refill_time, _}} = :queue.peek(q)
     refill_time

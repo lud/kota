@@ -1,3 +1,8 @@
+defmodule Kota.DocTest do
+  use ExUnit.Case, async: true
+  doctest Kota
+end
+
 defmodule Kota.With.SlidingWindowTest do
   alias Kota
 
