@@ -4,19 +4,31 @@ Mix.install(
   [
     {:rate_limiter, ">= 0.0.0"},
     {:ex_rated, ">= 0.0.0"},
-    {:hammer, "~> 6.1"},
+    {:hammer, ">= 0.0.0"},
     {:kota, ">= 0.0.0"}
   ],
-  verbose: true,
-  consolidate_protocols: true,
-  config: [
-    hammer: [
-      backend:
-        {Hammer.Backend.ETS,
-         [expiry_ms: 60_000 * 60 * 4, cleanup_interval_ms: 60_000 * 10]}
-    ]
-  ]
+  consolidate_protocols: true
 )
+
+defmodule HammerFixWindow do
+  use Hammer, backend: :ets, algorithm: :fix_window
+end
+
+defmodule HammerFixWindowPerKey do
+  use Hammer, backend: :ets, algorithm: :fix_window_per_key
+end
+
+defmodule HammerSlidingWindow do
+  use Hammer, backend: :ets, algorithm: :sliding_window
+end
+
+defmodule HammerLeakyBucket do
+  use Hammer, backend: :ets, algorithm: :leaky_bucket
+end
+
+defmodule HammerTokenBucket do
+  use Hammer, backend: :ets, algorithm: :token_bucket
+end
 
 defmodule Counter do
   def start_link(initial), do: GenServer.start_link(__MODULE__, initial)
@@ -41,6 +53,36 @@ defmodule Checker do
   @time_interval 1000
   @max_in_time 100
 
+  def intro do
+    IO.puts("""
+
+    Scenario: drain the end of a rate window, cross the window boundary, then
+    immediately drain the next window, targeting a rate of #{@max_in_time}
+    hits per #{@time_interval}ms.
+
+    Limiters that enforce the limit on average (per window or per refill)
+    accept up to twice the nominal rate in a short burst across the boundary,
+    which suits server-side input limiting. Limiters that enforce the limit
+    over any sliding window spread the hits instead, which suits client-side
+    usage such as respecting a remote API quota.
+    """)
+  end
+
+  def maybe_check(name, check_rate) do
+    case System.get_env("KOTA_BENCHMARK") do
+      nil ->
+        check(name, check_rate)
+
+      "" ->
+        check(name, check_rate)
+
+      name_part ->
+        if name =~ name_part,
+          do: check(name, check_rate),
+          else: :ok
+    end
+  end
+
   # Accepts a function that tries to increment the counter to more than
   # @max_in_time in less than @time_interval.
   def check(name, check_rate) do
@@ -49,13 +91,13 @@ defmodule Checker do
 
     {:span, count, time} = check_rate.()
 
-    message = "Counted #{count} in #{time}ms"
-    IO.puts(indent <> "Finished #{name}")
+    message = "#{count} hits in #{time}ms"
+    IO.puts(indent <> "Finished  #{name}")
 
     if count > @max_in_time and time <= @time_interval do
-      IO.puts([IO.ANSI.red(), indent, "KO    ", message, IO.ANSI.reset()])
+      IO.puts([IO.ANSI.yellow(), indent, "BURST ALLOWED    ", message, IO.ANSI.reset()])
     else
-      IO.puts([IO.ANSI.green(), indent, "OK    ", message, IO.ANSI.reset()])
+      IO.puts([IO.ANSI.green(), indent, "BURST PREVENTED  ", message, IO.ANSI.reset()])
     end
   end
 
@@ -143,41 +185,84 @@ defmodule Checker do
     end)
   end
 
-  def demo_hammer do
-    {:allow, _} = Hammer.check_rate("test", @max_in_time, @time_interval)
+  def demo_hammer(limiter, kind) do
+    args =
+      case kind do
+        # window algorithms take a scale in milliseconds and a limit
+        :window ->
+          [@time_interval, @max_in_time]
+
+        # bucket algorithms take a rate per second and a capacity
+        :bucket ->
+          [div(@max_in_time * 1000, @time_interval), @max_in_time]
+      end
+
+    hit = fn -> apply(limiter, :hit, ["demo" | args]) end
+
+    {:ok, _} = limiter.start_link(clean_period: :timer.minutes(10))
+
+    {:allow, _} = hit.()
     Process.sleep(900)
 
     count_span(199, fn counter ->
       for _ <- 1..99 do
-        :ok = hammer_wait("test", @time_interval, @max_in_time)
+        :ok = hammer_wait(hit)
         :ok = Counter.increment(counter)
       end
 
       Process.sleep(101)
 
       for _ <- 1..100 do
-        :ok = hammer_wait("test", @time_interval, @max_in_time)
+        :ok = hammer_wait(hit)
         :ok = Counter.increment(counter)
       end
     end)
   end
 
-  defp hammer_wait(bucket, time, max) do
-    case Hammer.check_rate(bucket, time, max) do
-      {:allow, _} -> :ok
-      {:deny, _} -> hammer_wait(bucket, time, max)
+  # Hammer has no blocking call, its API tells the caller when to retry. The
+  # sliding window algorithm records denied hits, so honoring the returned
+  # delay is required, a hot retry loop would starve itself.
+  defp hammer_wait(hit) do
+    case hit.() do
+      {:allow, _} ->
+        :ok
+
+      {:deny, retry_after} ->
+        Process.sleep(max(retry_after, 1))
+        hammer_wait(hit)
     end
   end
 end
 
-Checker.check("RateLimiter", &Checker.demo_rate_limiter/0)
-Checker.check("ExRated", &Checker.demo_ex_rated/0)
-Checker.check("Hammer", &Checker.demo_hammer/0)
+Checker.intro()
 
-Checker.check("Kota.Bucket.DiscreteCounter", fn ->
+Checker.maybe_check("RateLimiter", &Checker.demo_rate_limiter/0)
+Checker.maybe_check("ExRated", &Checker.demo_ex_rated/0)
+
+Checker.maybe_check("Hammer :fix_window (default)", fn ->
+  Checker.demo_hammer(HammerFixWindow, :window)
+end)
+
+Checker.maybe_check("Hammer :fix_window_per_key", fn ->
+  Checker.demo_hammer(HammerFixWindowPerKey, :window)
+end)
+
+Checker.maybe_check("Hammer :sliding_window", fn ->
+  Checker.demo_hammer(HammerSlidingWindow, :window)
+end)
+
+Checker.maybe_check("Hammer :leaky_bucket", fn ->
+  Checker.demo_hammer(HammerLeakyBucket, :bucket)
+end)
+
+Checker.maybe_check("Hammer :token_bucket", fn ->
+  Checker.demo_hammer(HammerTokenBucket, :bucket)
+end)
+
+Checker.maybe_check("Kota.Bucket.DiscreteCounter", fn ->
   Checker.demo_kota(Kota.Bucket.DiscreteCounter)
 end)
 
-Checker.check("Kota.Bucket.SlidingWindow", fn ->
+Checker.maybe_check("Kota.Bucket.SlidingWindow", fn ->
   Checker.demo_kota(Kota.Bucket.SlidingWindow)
 end)
