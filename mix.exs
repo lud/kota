@@ -1,7 +1,7 @@
 defmodule Kota.MixProject do
   use Mix.Project
 
-  @version "0.1.3"
+  @version "0.1.4"
   @repo "https://github.com/lud/kota"
   @changelog "#{@repo}/blob/main/CHANGELOG.md"
 
