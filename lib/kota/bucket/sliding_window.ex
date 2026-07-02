@@ -5,15 +5,16 @@ defmodule Kota.Bucket.SlidingWindow do
   A bucket adapter that accounts for taken allowances in time slots.
 
   Taken allowances are grouped into slots of `:slot_ms` milliseconds, and each
-  slot's usage is refilled as a whole, `:range_ms` milliseconds after the slot
-  activity started. Grouping keeps memory usage and processing low compared to
-  `Kota.Bucket.DiscreteCounter`: the bucket tracks one refill per slot instead
-  of one per taken allowance.
+  slot's usage is refilled as a whole, `:range_ms` milliseconds after the last
+  allowance taken in the slot. Grouping keeps memory usage and processing low
+  compared to `Kota.Bucket.DiscreteCounter`: the bucket tracks one refill per
+  slot instead of one per taken allowance.
 
   Because a whole slot is refilled at once, allowances taken during a slot are
-  refilled as if they had been taken at the end of it. Refills happen later
-  than with an exact per-allowance account, so under constant load this results
-  in a slightly lower effective rate than the configured maximum.
+  refilled as if they had all been taken at the same time as the last one.
+  Refills happen later than with an exact per-allowance account, so under
+  constant load this results in a slightly lower effective rate than the
+  configured maximum.
 
   Select this adapter with the `:adapter` option of `Kota.start_link/1`:
 
@@ -65,7 +66,8 @@ defmodule Kota.Bucket.SlidingWindow do
 
   Requires the `:max_allow`, `:range_ms` and `:start_time` options. The
   `:slot_ms` option is a positive integer of milliseconds, at most equal to
-  `:range_ms`, or `:one_tenth` to use a tenth of `:range_ms`. Raises an
+  `:range_ms`, or `:one_tenth` to use a tenth of `:range_ms`. Using
+  `:one_tenth` requires `:range_ms` to be at least 10. Raises an
   `ArgumentError` when an option is missing or invalid.
   """
   def new(opts) do
@@ -94,8 +96,16 @@ defmodule Kota.Bucket.SlidingWindow do
 
   defp validate_slot_ms(opts, range_ms) do
     case opts[:slot_ms] do
-      :one_tenth -> {:ok, div(range_ms, 10)}
-      _ -> Bucket.validate_pos_integer(opts, :slot_ms)
+      :one_tenth when range_ms < 10 ->
+        {:error,
+         "option :slot_ms with value :one_tenth requires option :range_ms " <>
+           "to be at least 10, got: #{range_ms}"}
+
+      :one_tenth ->
+        {:ok, div(range_ms, 10)}
+
+      _ ->
+        Bucket.validate_pos_integer(opts, :slot_ms)
     end
   end
 
@@ -139,10 +149,13 @@ defmodule Kota.Bucket.SlidingWindow do
     end
   end
 
-  def take(bucket, _now) do
-    # on failure, since we may have called close_slot(), we still return the updated
-    # bucket.
-    {:reject, bucket}
+  def take(bucket, now) do
+    # The allowance is exhausted but a refill may have matured within the
+    # current slot. On failure we still return the updated bucket.
+    case refill(bucket, now) do
+      %__MODULE__{allowance: 0} = bucket -> {:reject, bucket}
+      bucket -> take(bucket, now)
+    end
   end
 
   defp close_slot(bucket, now) do

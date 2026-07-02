@@ -26,6 +26,38 @@ defmodule Kota.Bucket.SlidingWindowTest do
     end
   end
 
+  test "one tenth slots require a range of at least 10ms" do
+    # Kota defaults :slot_ms to :one_tenth. With a range below 10ms,
+    # div(range_ms, 10) is 0, and a zero-width slot would make take/2 loop
+    # forever while walking slots, so such buckets are refused at build time.
+    assert_raise ArgumentError, ~r/:one_tenth.*:range_ms.*got: 5/, fn ->
+      @mod.new(max_allow: 1, range_ms: 5, start_time: 0, slot_ms: :one_tenth)
+    end
+
+    # a 10ms range is the smallest accepted, giving 1ms slots
+    b = @mod.new(max_allow: 1, range_ms: 10, start_time: 0, slot_ms: :one_tenth)
+    assert 1 == b.slot_ms
+    assert {:ok, _} = @mod.take(b, 0)
+  end
+
+  test "allowances are available at the announced refill time" do
+    # With max_allow 3, range 300 and slots of 100, takes at 0, 150 and 250
+    # exhaust the bucket. The take at 250 closes the slot early and the next
+    # slot ends at 350, but the refill for the take at time 0 matures at 300.
+    # Kota relies on next_refill!/1 to schedule its next attempt, so a take at
+    # the announced time must succeed, otherwise the server retries with a
+    # zero timeout in a busy loop until the slot boundary.
+    b = test_bucket(3, 300, 0, 100)
+
+    assert {:ok, b} = @mod.take(b, 0)
+    assert {:ok, b} = @mod.take(b, 150)
+    assert {:ok, b} = @mod.take(b, 250)
+    assert %{allowance: 0} = b
+
+    assert 300 == @mod.next_refill!(b)
+    assert {:ok, _} = @mod.take(b, 300)
+  end
+
   test "threes, consume early" do
     b = test_bucket(3, 300, 0)
 

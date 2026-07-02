@@ -7,6 +7,7 @@ Mix.install(
     {:hammer, "~> 6.1"},
     {:kota, ">= 0.0.0"}
   ],
+  verbose: true,
   consolidate_protocols: true,
   config: [
     hammer: [

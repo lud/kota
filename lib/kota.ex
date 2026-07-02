@@ -42,7 +42,8 @@ defmodule Kota do
   * `:range_ms` - the duration of the time range, in milliseconds. Required.
   * `:slot_ms` - the duration of the accounting slots used by
     `Kota.Bucket.SlidingWindow`, in milliseconds. Defaults to `:one_tenth`,
-    which resolves to a tenth of `:range_ms`.
+    which resolves to a tenth of `:range_ms` and requires `:range_ms` to be at
+    least 10.
   * `:start_time` - the timestamp marking the start of the first time range, in
     milliseconds. Defaults to the current time.
 
